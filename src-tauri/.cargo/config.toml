@@ -1,0 +1,8 @@
+# Tolerant networking for slow/flaky links so crate fetches don't abort early.
+[net]
+retry = 20
+
+[http]
+multiplexing = false
+low-speed-limit = 1
+timeout = 300

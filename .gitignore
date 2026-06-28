@@ -1,0 +1,21 @@
+# dependencies
+node_modules
+# build output
+dist
+# tauri / rust
+src-tauri/target
+# local toolchain bootstrap (downloaded compilers, not source)
+.tools
+*.exe
+# whisper models are large binaries, not committed
+src-tauri/models/*.bin
+# updater signing key + password — NEVER commit (loss/leak breaks updates)
+.keys/
+# generated release artifacts
+latest.json
+*.sig
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

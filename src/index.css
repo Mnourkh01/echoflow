@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0c0d10;
+  color: #e7e9ee;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* Transcript text is selectable so users can copy partial text. */
+.selectable {
+  user-select: text;
+}
+
+/* The floating overlay window is frameless + transparent; let the pill shape show. */
+html.overlay,
+html.overlay body,
+html.overlay #root {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+@layer components {
+  .tool-btn {
+    @apply grid h-8 w-8 place-items-center rounded-md text-ink-400 transition hover:bg-ink-800 hover:text-white;
+  }
+  .field {
+    @apply w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-100 outline-none focus:border-accent;
+  }
+}
+
+/* Thin, quiet scrollbars that fit a desktop tool. */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a2e38;
+  border-radius: 999px;
+  border: 2px solid #14161b;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a404d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

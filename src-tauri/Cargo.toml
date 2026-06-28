@@ -1,0 +1,46 @@
+[package]
+name = "voice-app"
+version = "0.1.0"
+description = "Offline voice to text for English and Arabic"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "voice_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.15"
+hound = "3.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+whisper-rs = "0.14"
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+docx-rs = "0.4"
+dirs = "5"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_Foundation",
+] }
+
+[profile.dev]
+# whisper.cpp is unusably slow without optimization, even in dev builds.
+[profile.dev.package."*"]
+opt-level = 3
