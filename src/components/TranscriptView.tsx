@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Copy, Check, FileText, FileType, Captions, Languages, Clock, Pin } from "lucide-react";
+import { Copy, Check, FileText, FileType, Captions, Languages, Clock, Pin, BookmarkPlus } from "lucide-react";
 import type { RecordingResult } from "../lib/api";
 import { api } from "../lib/api";
 import { dirFor, fontFor, langName, fmtDuration } from "../lib/format";
@@ -10,9 +10,10 @@ import { useT } from "../lib/i18n";
 interface Props {
   rec: RecordingResult | null;
   onTogglePin?: (id: number, pinned: boolean) => void;
+  onSavePrompt?: (text: string) => void;
 }
 
-export default function TranscriptView({ rec, onTogglePin }: Props) {
+export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props) {
   const { t } = useT();
   const [copied, setCopied] = useState(false);
   const [showSegments, setShowSegments] = useState(false);
@@ -79,6 +80,15 @@ export default function TranscriptView({ rec, onTogglePin }: Props) {
           <button onClick={copy} className="tool-btn" title={t("copy_text")}>
             {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
           </button>
+          {onSavePrompt && rec.full_text.trim() && (
+            <button
+              onClick={() => onSavePrompt(rec.full_text)}
+              className="tool-btn"
+              title={t("save_as_prompt")}
+            >
+              <BookmarkPlus className="h-4 w-4" />
+            </button>
+          )}
           <button onClick={() => exportAs("txt")} className="tool-btn" title={t("export_txt")}>
             <FileText className="h-4 w-4" />
           </button>

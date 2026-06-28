@@ -174,13 +174,13 @@ pub fn to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
-/// Resample mono audio to 16 kHz with linear interpolation. Good enough for
-/// speech; a polyphase resampler is a later refinement.
-pub fn resample_to_16k(mono: &[f32], from_rate: u32) -> Vec<f32> {
-    if from_rate == TARGET_RATE || mono.is_empty() {
+/// Resample mono audio between two rates with linear interpolation. Good enough
+/// for speech; a polyphase resampler is a later refinement.
+pub fn resample(mono: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || mono.is_empty() {
         return mono.to_vec();
     }
-    let ratio = TARGET_RATE as f64 / from_rate as f64;
+    let ratio = to_rate as f64 / from_rate as f64;
     let out_len = ((mono.len() as f64) * ratio).round() as usize;
     let mut out = Vec::with_capacity(out_len);
     for i in 0..out_len {
@@ -190,6 +190,32 @@ pub fn resample_to_16k(mono: &[f32], from_rate: u32) -> Vec<f32> {
         let a = mono.get(idx).copied().unwrap_or(0.0);
         let b = mono.get(idx + 1).copied().unwrap_or(a);
         out.push(a + (b - a) * frac);
+    }
+    out
+}
+
+/// Resample mono audio to 16 kHz (Whisper's required rate).
+pub fn resample_to_16k(mono: &[f32], from_rate: u32) -> Vec<f32> {
+    resample(mono, from_rate, TARGET_RATE)
+}
+
+/// RNNoise denoise. Expects 48 kHz mono; processes 480-sample (10 ms) frames.
+/// RNNoise works in the i16 amplitude range, so scale up before and back after.
+fn denoise_48k(mono48: &[f32]) -> Vec<f32> {
+    use nnnoiseless::DenoiseState;
+    let frame = DenoiseState::FRAME_SIZE;
+    let mut st = DenoiseState::new();
+    let mut in_buf = vec![0f32; frame];
+    let mut out_buf = vec![0f32; frame];
+    let mut out = Vec::with_capacity(mono48.len());
+    for chunk in mono48.chunks(frame) {
+        for (i, slot) in in_buf.iter_mut().enumerate() {
+            *slot = chunk.get(i).copied().unwrap_or(0.0) * 32768.0;
+        }
+        st.process_frame(&mut out_buf, &in_buf);
+        for &s in out_buf.iter().take(chunk.len()) {
+            out.push(s / 32768.0);
+        }
     }
     out
 }
@@ -211,10 +237,18 @@ fn normalize_peak(samples: &mut [f32], target: f32, max_gain: f32) {
 }
 
 /// Full pipeline: raw interleaved capture -> 16 kHz mono, gain-normalized, and
-/// padded to at least one second so Whisper's mel front end has enough to work with.
-pub fn prepare_for_whisper(captured: &CapturedAudio) -> Vec<f32> {
+/// padded to at least one second so Whisper's mel front end has enough to work
+/// with. When `denoise` is on, RNNoise cleans background noise first (at 48 kHz,
+/// the rate it operates on) so speech stays clear through a noisy mic.
+pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> {
     let mono = to_mono(&captured.samples, captured.channels);
-    let mut out = resample_to_16k(&mono, captured.sample_rate);
+    let mut out = if denoise {
+        let m48 = resample(&mono, captured.sample_rate, 48_000);
+        let clean = denoise_48k(&m48);
+        resample(&clean, 48_000, TARGET_RATE)
+    } else {
+        resample_to_16k(&mono, captured.sample_rate)
+    };
     normalize_peak(&mut out, 0.95, 25.0);
     let min_len = TARGET_RATE as usize;
     if out.len() < min_len {

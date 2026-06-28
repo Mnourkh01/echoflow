@@ -15,7 +15,9 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use crate::audio;
 use crate::enhance;
 use crate::export;
-use crate::models::{ApiUsage, AppStatus, ModelInfo, RecordingResult, RecordingSummary, Settings};
+use crate::models::{
+    ApiUsage, AppStatus, ModelInfo, Prompt, RecordingResult, RecordingSummary, Settings,
+};
 use crate::paths::AppPaths;
 use crate::state::AppState;
 
@@ -29,6 +31,16 @@ const SPEECH_LEVEL: f32 = 0.05;
 const NO_SPEECH_GRACE: Duration = Duration::from_secs(15);
 
 type R<T> = Result<T, String>;
+
+/// Windows: spawn child processes (curl) without popping a console window.
+fn no_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 
 fn write_wav_16k(path: &Path, audio: &[f32]) -> anyhow::Result<()> {
     let spec = hound::WavSpec {
@@ -124,25 +136,31 @@ fn lang_code_for(target: &str) -> String {
 /// can mangle Unicode (the "only some words / random dots" bug), so it is only a
 /// fallback when the clipboard is unavailable.
 #[cfg(windows)]
-fn type_into_focused(text: &str) {
+fn type_into_focused(text: &str, leave_on_clipboard: bool) {
     if text.is_empty() {
         return;
     }
-    // Preserve the user's clipboard, paste ours, then restore it.
+    // Preserve the user's clipboard, paste ours, then restore it — unless we're
+    // told to leave the result on the clipboard (auto-copy) for pasting elsewhere.
     let prior = clipboard::get_text();
     match clipboard::set_text(text) {
         Ok(()) => {
             clipboard::send_ctrl_v();
             // Give the target app time to read the paste before we restore.
             std::thread::sleep(std::time::Duration::from_millis(160));
-            if let Some(prev) = prior {
-                let _ = clipboard::set_text(&prev);
+            if !leave_on_clipboard {
+                if let Some(prev) = prior {
+                    let _ = clipboard::set_text(&prev);
+                }
             }
             log::info!("auto-type: pasted {} chars", text.chars().count());
         }
         Err(e) => {
             log::warn!("auto-type: clipboard paste failed ({e}); using key events");
             send_unicode_chunked(text);
+            if leave_on_clipboard {
+                let _ = clipboard::set_text(text);
+            }
         }
     }
 }
@@ -310,7 +328,7 @@ mod clipboard {
 }
 
 #[cfg(not(windows))]
-fn type_into_focused(_text: &str) {
+fn type_into_focused(_text: &str, _leave_on_clipboard: bool) {
     log::warn!("auto-type into the active app is only implemented on Windows");
 }
 
@@ -386,15 +404,17 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         0
     };
 
-    let audio_16k = audio::prepare_for_whisper(&captured);
+    let denoise = state.settings.read().noise_suppression;
+    let audio_16k = audio::prepare_for_whisper(&captured, denoise);
 
-    let (model, lang_mode, dialect, auto_type, keep_line_breaks, output_mode, translate_target) = {
+    let (model, lang_mode, dialect, auto_type, auto_copy, keep_line_breaks, output_mode, translate_target) = {
         let s = state.settings.read();
         (
             s.model.clone(),
             s.language_mode.clone(),
             s.dialect.clone(),
             s.auto_type,
+            s.auto_copy,
             s.keep_line_breaks,
             s.output_mode.clone(),
             s.translate_target.clone(),
@@ -466,13 +486,22 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         )
         .map_err(|e| e.to_string())?;
 
-    if inject && auto_type && has_words(&transcript.full_text) {
+    let has = has_words(&transcript.full_text);
+    let did_type = inject && auto_type && has;
+    if did_type {
         let typed = if keep_line_breaks {
             transcript.full_text.clone()
         } else {
             one_line(&transcript.full_text)
         };
-        type_into_focused(&typed);
+        type_into_focused(&typed, auto_copy);
+    } else if auto_copy && has {
+        // Not typing into another app (in-app capture, or auto-type off): leave the
+        // result on the clipboard so the user can paste it anywhere.
+        #[cfg(windows)]
+        {
+            let _ = clipboard::set_text(&transcript.full_text);
+        }
     }
 
     Ok(Some(RecordingResult {
@@ -581,6 +610,35 @@ pub fn clear_recordings(state: State<AppState>) -> R<usize> {
     }
     log::info!("cleared history: {n} recordings removed");
     Ok(n)
+}
+
+// ---- Saved prompts library ------------------------------------------------
+
+/// Save a reusable prompt. Title defaults to the first words if not given.
+#[tauri::command]
+pub fn save_prompt(state: State<AppState>, text: String, title: Option<String>) -> R<i64> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("nothing to save".into());
+    }
+    let title = title
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| {
+            let t: String = text.chars().take(60).collect();
+            t
+        });
+    state.db.save_prompt(&title, text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_prompts(state: State<AppState>) -> R<Vec<Prompt>> {
+    state.db.list_prompts().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_prompt(state: State<AppState>, id: i64) -> R<()> {
+    state.db.delete_prompt(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -709,10 +767,9 @@ fn model_url(name: &str) -> String {
 
 /// Read the final Content-Length via curl HEAD (follows HF's redirect to the CDN).
 fn head_content_length(url: &str) -> Option<u64> {
-    let out = Command::new("curl")
-        .args(["-sIL", "--max-time", "30", url])
-        .output()
-        .ok()?;
+    let mut cmd = Command::new("curl");
+    cmd.args(["-sIL", "--max-time", "30", url]);
+    let out = no_window(&mut cmd).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.lines()
         .filter_map(|l| {
@@ -756,11 +813,11 @@ fn run_model_download(app: &AppHandle, name: &str, dest_dir: &Path) -> Result<()
     }
 
     // `-C -` resumes a partial file, which matters on a flaky connection.
-    let status = Command::new("curl")
-        .args(["-L", "--fail", "--silent", "--show-error", "-C", "-", "-o"])
+    let mut curl = Command::new("curl");
+    curl.args(["-L", "--fail", "--silent", "--show-error", "-C", "-", "-o"])
         .arg(&part)
-        .arg(&url)
-        .status();
+        .arg(&url);
+    let status = no_window(&mut curl).status();
     stop.store(true, Ordering::Relaxed);
 
     let status = status.map_err(|e| format!("could not start curl: {e}"))?;

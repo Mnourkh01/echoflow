@@ -69,6 +69,19 @@ const STRINGS = {
   delete: { en: "Delete", ar: "حذف" },
   today: { en: "Today", ar: "اليوم" },
   yesterday: { en: "Yesterday", ar: "أمس" },
+
+  // Prompts library
+  tab_history: { en: "History", ar: "السجل" },
+  tab_prompts: { en: "Prompts", ar: "البرومبتات" },
+  no_prompts: { en: "No saved prompts yet.", ar: "لا توجد برومبتات محفوظة بعد." },
+  save_as_prompt: { en: "Save as prompt", ar: "حفظ كبرومبت" },
+  prompt_saved: { en: "Saved to prompts", ar: "حُفظ في البرومبتات" },
+  no_prompt_selected: { en: "No prompt selected", ar: "لم يُختر برومبت" },
+  no_prompt_hint: {
+    en: "Pick a saved prompt to view and copy it. Save good ones from any result with 'Save as prompt'.",
+    ar: "اختر برومبتاً محفوظاً لعرضه ونسخه. احفظ الجيد منها من أي نتيجة عبر 'حفظ كبرومبت'.",
+  },
+  copied: { en: "Copied", ar: "تم النسخ" },
   pin_keep: { en: "Pin (keep)", ar: "تثبيت (إبقاء)" },
   unpin: { en: "Unpin", ar: "إلغاء التثبيت" },
   pinned: { en: "Kept", ar: "محفوظ" },
@@ -172,6 +185,11 @@ const STRINGS = {
     en: "Insert the recognized text where your cursor is, in any app.",
     ar: "إدراج النص المُتعرَّف عليه عند مؤشرك في أي تطبيق.",
   },
+  auto_copy: { en: "Copy result to clipboard", ar: "نسخ النتيجة إلى الحافظة" },
+  auto_copy_desc: {
+    en: "After each result, leave the text on your clipboard so you can paste it anywhere with Ctrl+V.",
+    ar: "بعد كل نتيجة، يُبقي النص في الحافظة لتلصقه في أي مكان بـ Ctrl+V.",
+  },
   keep_line_breaks: { en: "Keep line breaks", ar: "إبقاء فواصل الأسطر" },
   keep_line_breaks_desc: {
     en: "Off (default): typed as one line, never presses Enter, so terminals, chat boxes and search bars don't submit early. On: keeps newlines for editors and Word.",
@@ -181,6 +199,11 @@ const STRINGS = {
   sound_cue_desc: {
     en: "Soft tone when recording starts and stops.",
     ar: "نغمة خفيفة عند بدء التسجيل وإيقافه.",
+  },
+  noise_suppression: { en: "Noise suppression", ar: "كبح الضوضاء" },
+  noise_suppression_desc: {
+    en: "Clean background noise (fans, traffic, hum) from the mic before transcribing, so your voice comes through clearly. Recommended.",
+    ar: "ينظّف ضوضاء الخلفية (مراوح، ضجيج، طنين) من الميكروفون قبل التحويل ليصل صوتك بوضوح. مُستحسن.",
   },
   app_language: { en: "App language", ar: "لغة التطبيق" },
 

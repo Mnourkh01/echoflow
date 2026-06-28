@@ -638,6 +638,12 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             checked={settings.auto_type}
             onChange={(v) => patch({ auto_type: v })}
           />
+          <Toggle
+            label={t("auto_copy")}
+            desc={t("auto_copy_desc")}
+            checked={settings.auto_copy}
+            onChange={(v) => patch({ auto_copy: v })}
+          />
           {settings.auto_type && (
             <Toggle
               label={t("keep_line_breaks")}
@@ -651,6 +657,12 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             desc={t("sound_cue_desc")}
             checked={settings.sound}
             onChange={(v) => patch({ sound: v })}
+          />
+          <Toggle
+            label={t("noise_suppression")}
+            desc={t("noise_suppression_desc")}
+            checked={settings.noise_suppression}
+            onChange={(v) => patch({ noise_suppression: v })}
           />
 
           <Field label={t("storage")}>

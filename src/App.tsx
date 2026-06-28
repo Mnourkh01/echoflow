@@ -4,12 +4,13 @@ import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { Settings as SettingsIcon, Cpu, AlertTriangle, Minimize2 } from "lucide-react";
 import RecordControl, { type RecState } from "./components/RecordControl";
 import TranscriptView from "./components/TranscriptView";
-import HistorySidebar from "./components/HistorySidebar";
+import HistorySidebar, { type SidebarTab } from "./components/HistorySidebar";
+import PromptView from "./components/PromptView";
 import SettingsPanel from "./components/SettingsPanel";
 import ModeSwitcher from "./components/ModeSwitcher";
 import UpdateBanner from "./components/UpdateBanner";
 import FirstRunModel from "./components/FirstRunModel";
-import { api, type AppStatus, type OutputMode, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
+import { api, type AppStatus, type OutputMode, type Prompt, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
 import { checkForUpdate, type Update } from "./lib/updater";
 import { I18nProvider, translate } from "./lib/i18n";
 import { playStart, playStop } from "./lib/sound";
@@ -21,6 +22,9 @@ export default function App() {
   const [current, setCurrent] = useState<RecordingResult | null>(null);
   const [history, setHistory] = useState<RecordingSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [tab, setTab] = useState<SidebarTab>("history");
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [activePromptId, setActivePromptId] = useState<number | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -44,13 +48,18 @@ export default function App() {
     setHistory(await api.listRecordings(q && q.length ? q : null));
   }, []);
 
+  const refreshPrompts = useCallback(async () => {
+    setPrompts(await api.listPrompts());
+  }, []);
+
   useEffect(() => {
     api.appStatus().then(setStatus).catch(() => {});
     api.getSettings().then(setSettings).catch(() => {});
     refreshHistory();
+    refreshPrompts().catch(() => {});
     // Quietly check for an update on launch; a hit renders the banner.
     checkForUpdate().then(setUpdate).catch(() => {});
-  }, [refreshHistory]);
+  }, [refreshHistory, refreshPrompts]);
 
   const start = useCallback(async () => {
     if (recStateRef.current !== "idle") return;
@@ -235,16 +244,41 @@ export default function App() {
     await refreshHistory();
   }
 
+  // Saved prompts library.
+  const currentPrompt = prompts.find((p) => p.id === activePromptId) ?? null;
+
+  async function savePrompt(text: string) {
+    try {
+      await api.savePrompt(text);
+      await refreshPrompts();
+      flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "prompt_saved"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function deletePrompt(id: number) {
+    await api.deletePrompt(id);
+    if (activePromptId === id) setActivePromptId(null);
+    await refreshPrompts();
+  }
+
   return (
     <I18nProvider lang={uiLang}>
     <div className="flex h-screen overflow-hidden">
       <HistorySidebar
+        tab={tab}
+        onTab={setTab}
         items={history}
         activeId={activeId}
         onSelect={selectRecording}
         onDelete={deleteRecording}
         onPin={togglePin}
         onSearch={(q) => refreshHistory(q)}
+        prompts={prompts}
+        activePromptId={activePromptId}
+        onSelectPrompt={setActivePromptId}
+        onDeletePrompt={deletePrompt}
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -312,14 +346,19 @@ export default function App() {
           </div>
         )}
 
-        <RecordControl
-          state={recState}
-          level={level}
-          elapsedMs={elapsed}
-          onToggle={toggle}
-        />
-
-        <TranscriptView rec={current} onTogglePin={togglePin} />
+        {tab === "prompts" ? (
+          <PromptView prompt={currentPrompt} onDelete={deletePrompt} />
+        ) : (
+          <>
+            <RecordControl
+              state={recState}
+              level={level}
+              elapsedMs={elapsed}
+              onToggle={toggle}
+            />
+            <TranscriptView rec={current} onTogglePin={togglePin} onSavePrompt={savePrompt} />
+          </>
+        )}
       </main>
 
       {status && !status.model_present && (

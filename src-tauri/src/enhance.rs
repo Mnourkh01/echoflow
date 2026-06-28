@@ -7,6 +7,20 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 
+/// Windows: don't pop a console window when we spawn `claude`/`curl`.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Apply the no-window flag on Windows; no-op elsewhere.
+fn hidden(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Professional translation into `target` (any language / any Arabic dialect in).
 /// Built per-call so the user can pick the target language.
 pub fn translate_system(target: &str) -> String {
@@ -143,9 +157,9 @@ pub fn run_api(
         return Err(anyhow!("could not write request config: {e}"));
     }
 
-    let out = Command::new("curl")
-        .arg("-K")
-        .arg(&cfg_path)
+    let mut curl = Command::new("curl");
+    curl.arg("-K").arg(&cfg_path);
+    let out = hidden(&mut curl)
         .output()
         .map_err(|e| anyhow!("could not start curl: {e}"));
     // Remove both temp files (key-bearing config + request body) right away.
@@ -213,8 +227,8 @@ pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<St
     let command = command.trim();
     let exe = if command.is_empty() { "claude" } else { command };
 
-    let mut child = Command::new(exe)
-        .arg("-p")
+    let mut cmd = Command::new(exe);
+    cmd.arg("-p")
         .arg("--output-format")
         .arg("text")
         .arg("--append-system-prompt")
@@ -222,7 +236,8 @@ pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<St
         .current_dir(std::env::temp_dir()) // neutral cwd: don't pick up a project CLAUDE.md
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = hidden(&mut cmd)
         .spawn()
         .map_err(|e| anyhow!("could not start '{exe}': {e}"))?;
 

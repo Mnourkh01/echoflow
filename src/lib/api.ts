@@ -30,6 +30,13 @@ export interface RecordingSummary {
   pinned: boolean;
 }
 
+export interface Prompt {
+  id: number;
+  created_at: string;
+  title: string;
+  text: string;
+}
+
 export type OutputMode = "raw" | "translate" | "polish" | "prompt";
 
 export interface Settings {
@@ -40,8 +47,10 @@ export interface Settings {
   ptt_hotkey: string;
   capture_mode: "hold" | "toggle";
   auto_type: boolean;
+  auto_copy: boolean;
   keep_line_breaks: boolean;
   sound: boolean;
+  noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;
   ai_engine: "cli" | "api";
@@ -103,6 +112,10 @@ export const api = {
   setPinned: (id: number, pinned: boolean) =>
     invoke<void>("set_pinned", { id, pinned }),
   clearData: () => invoke<number>("clear_recordings"),
+  savePrompt: (text: string, title?: string) =>
+    invoke<number>("save_prompt", { text, title: title ?? null }),
+  listPrompts: () => invoke<Prompt[]>("list_prompts"),
+  deletePrompt: (id: number) => invoke<void>("delete_prompt", { id }),
   exportRecording: (id: number, format: "txt" | "srt" | "docx", path: string) =>
     invoke<void>("export_recording", { id, format, path }),
   getSettings: () => invoke<Settings>("get_settings"),

@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::path::Path;
 
-use crate::models::{RecordingResult, RecordingSummary, Settings};
+use crate::models::{Prompt, RecordingResult, RecordingSummary, Settings};
 use crate::whisper::Segment;
 
 pub struct Db {
@@ -52,6 +52,12 @@ impl Db {
             );
             INSERT OR IGNORE INTO usage (id, input_tokens, output_tokens, calls)
                 VALUES (1, 0, 0, 0);
+            CREATE TABLE IF NOT EXISTS prompts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                title TEXT NOT NULL,
+                text TEXT NOT NULL
+            );
             "#,
         )?;
         // Migration: older databases predate the pinned column. ALTER fails
@@ -280,6 +286,40 @@ impl Db {
             "UPDATE usage SET input_tokens = 0, output_tokens = 0, calls = 0 WHERE id = 1",
             [],
         )?;
+        Ok(())
+    }
+
+    pub fn save_prompt(&self, title: &str, text: &str) -> Result<i64> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO prompts (created_at, title, text) VALUES (?1, ?2, ?3)",
+            rusqlite::params![Utc::now().to_rfc3339(), title, text],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_prompts(&self) -> Result<Vec<Prompt>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT id, created_at, title, text FROM prompts ORDER BY id DESC")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Prompt {
+                id: row.get(0)?,
+                created_at: row.get(1)?,
+                title: row.get(2)?,
+                text: row.get(3)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    pub fn delete_prompt(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM prompts WHERE id = ?1", [id])?;
         Ok(())
     }
 

@@ -38,8 +38,10 @@ pub struct Settings {
     pub ptt_hotkey: String,
     pub capture_mode: String, // "hold" (push to talk) | "toggle"
     pub auto_type: bool,      // type result into the focused app
+    pub auto_copy: bool,      // leave the result on the clipboard so it can be pasted anywhere
     pub keep_line_breaks: bool, // keep newlines when typing (off = one line, never presses Enter)
     pub sound: bool,          // soft start/stop chime
+    pub noise_suppression: bool, // RNNoise denoise on the mic before transcription
     pub output_mode: String,  // "raw" | "translate" | "polish" | "prompt"
     pub translate_target: String, // language name to translate INTO (e.g. "English")
     pub ai_engine: String,    // "cli" (default) | "api"
@@ -64,8 +66,10 @@ impl Default for Settings {
             ptt_hotkey: "CommandOrControl+Shift+Space".to_string(),
             capture_mode: "toggle".to_string(),
             auto_type: true,
+            auto_copy: true,
             keep_line_breaks: false,
             sound: true,
+            noise_suppression: true,
             output_mode: "raw".to_string(),
             translate_target: "English".to_string(),
             ai_engine: "cli".to_string(),
@@ -80,6 +84,14 @@ impl Default for Settings {
             idle_unload_minutes: 5,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Prompt {
+    pub id: i64,
+    pub created_at: String,
+    pub title: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
