@@ -12,7 +12,10 @@ param(
   [string]$Notes = "Bug fixes and improvements.",
   [string]$Repo = "Mnourkh01/echoflow"
 )
-$ErrorActionPreference = "Stop"
+# NOTE: 'Continue', not 'Stop'. Native tools (npm/cargo/tauri/gh) print progress to
+# stderr; under 'Stop' PowerShell 5.1 turns that into a terminating NativeCommandError
+# and aborts before the build even starts. We gate on $LASTEXITCODE + explicit throws.
+$ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 
 # 1. Updater signing secrets (never printed, never committed).
