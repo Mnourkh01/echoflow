@@ -186,6 +186,11 @@ const STRINGS = {
     en: "Click, then press the keys you want. Works even when this window is not focused.",
     ar: "انقر ثم اضغط المفاتيح التي تريدها. يعمل حتى عندما لا تكون هذه النافذة نشطة.",
   },
+  toggle_window_hotkey: { en: "Show / hide window", ar: "إظهار / إخفاء النافذة" },
+  toggle_window_hotkey_hint: {
+    en: "Global shortcut to flip between the full window and the floating pill.",
+    ar: "اختصار عام للتبديل بين النافذة الكاملة والشريط العائم.",
+  },
   press_shortcut: { en: "Press your shortcut...", ar: "اضغط اختصارك..." },
   click_set_shortcut: { en: "Click to set a shortcut", ar: "انقر لتعيين اختصار" },
   clear: { en: "clear", ar: "مسح" },

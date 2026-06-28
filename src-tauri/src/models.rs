@@ -41,7 +41,8 @@ pub struct Settings {
     pub language_mode: String, // "auto" | "en" | "ar"
     pub dialect: String,       // Arabic dialect prime: "auto" | egyptian | levantine | gulf | iraqi | maghrebi
     pub ptt_hotkey: String,
-    pub capture_mode: String, // "hold" (push to talk) | "toggle"
+    pub toggle_hotkey: String, // global shortcut to flip the main window <-> floating pill
+    pub capture_mode: String,  // "hold" (push to talk) | "toggle"
     pub auto_type: bool,      // type result into the focused app
     pub auto_copy: bool,      // leave the result on the clipboard so it can be pasted anywhere
     pub keep_line_breaks: bool, // keep newlines when typing (off = one line, never presses Enter)
@@ -71,6 +72,7 @@ impl Default for Settings {
             language_mode: "auto".to_string(),
             dialect: "auto".to_string(),
             ptt_hotkey: "CommandOrControl+Shift+Space".to_string(),
+            toggle_hotkey: "CommandOrControl+Shift+E".to_string(),
             capture_mode: "toggle".to_string(),
             auto_type: true,
             auto_copy: true,

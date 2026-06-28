@@ -61,22 +61,28 @@ fn write_wav_16k(path: &Path, audio: &[f32]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// (Un)register the global hotkey. Returns whether it is now active. Failures
-/// are logged, never fatal.
-pub fn register_ptt(app: &AppHandle, hotkey: &str) -> bool {
+/// (Re)register every global shortcut: push-to-talk plus the window<->pill toggle.
+/// Both live on the one plugin, and registering calls `unregister_all()` first, so
+/// they MUST be registered together (registering PTT alone would drop the toggle).
+/// An empty string disables that shortcut. Returns whether PTT is now active
+/// (the value `update_settings` reports back to the UI).
+pub fn register_shortcuts(app: &AppHandle, ptt: &str, toggle: &str) -> bool {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    let key = hotkey.trim();
-    if key.is_empty() {
-        return true; // nothing to register is a valid (disabled) state
-    }
-    match gs.register(key) {
-        Ok(()) => true,
-        Err(e) => {
+    let mut ptt_ok = true;
+    // Skip a key equal to PTT so we never double-register the same accelerator.
+    for (key, is_ptt) in [(ptt.trim(), true), (toggle.trim(), false)] {
+        if key.is_empty() || (!is_ptt && key == ptt.trim()) {
+            continue;
+        }
+        if let Err(e) = gs.register(key) {
             log::warn!("could not register hotkey '{key}': {e}");
-            false
+            if is_ptt {
+                ptt_ok = false;
+            }
         }
     }
+    ptt_ok
 }
 
 #[tauri::command]
@@ -686,9 +692,13 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     // kill push-to-talk. Settings saves happen on every mode / language switch, so
     // only touch the shortcut when the hotkey itself actually changed — otherwise
     // switching clean/prompt/translate silently dropped voice detection.
-    let old_hotkey = state.settings.read().ptt_hotkey.clone();
+    let (old_ptt, old_toggle) = {
+        let s = state.settings.read();
+        (s.ptt_hotkey.clone(), s.toggle_hotkey.clone())
+    };
     state.db.save_settings(&settings).map_err(|e| e.to_string())?;
-    let hotkey = settings.ptt_hotkey.clone();
+    let ptt = settings.ptt_hotkey.clone();
+    let toggle = settings.toggle_hotkey.clone();
     let retention = settings.retention_days;
     *state.settings.write() = settings;
     // Apply a shortened retention window immediately, not just on next launch.
@@ -699,10 +709,10 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     }
     // Keep the tray's mode menu in sync with changes made in the UI.
     crate::refresh_tray_menu(&app);
-    let ok = if hotkey != old_hotkey {
-        register_ptt(&app, &hotkey)
+    let ok = if ptt != old_ptt || toggle != old_toggle {
+        register_shortcuts(&app, &ptt, &toggle)
     } else {
-        true // unchanged: leave the live shortcut intact
+        true // unchanged: leave the live shortcuts intact
     };
     Ok(ok)
 }

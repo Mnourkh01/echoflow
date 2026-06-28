@@ -48,6 +48,7 @@ export interface Settings {
   language_mode: string; // "auto" | "en" | "ar" | European codes (fr, de, es, it, pt, nl)
   dialect: string; // "auto" | egyptian | levantine | gulf | iraqi | maghrebi
   ptt_hotkey: string;
+  toggle_hotkey: string; // global shortcut to flip main window <-> floating pill
   capture_mode: "hold" | "toggle";
   auto_type: boolean;
   auto_copy: boolean;

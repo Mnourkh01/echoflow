@@ -650,6 +650,17 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             <p className="mt-1 text-xs text-ink-500">{t("hotkey_hint")}</p>
           </Field>
 
+          <Field label={t("toggle_window_hotkey")}>
+            <HotkeyRecorder
+              value={settings.toggle_hotkey}
+              placeholderSet={t("click_set_shortcut")}
+              placeholderRecording={t("press_shortcut")}
+              clearLabel={t("clear")}
+              onChange={(v) => patch({ toggle_hotkey: v })}
+            />
+            <p className="mt-1 text-xs text-ink-500">{t("toggle_window_hotkey_hint")}</p>
+          </Field>
+
           <Toggle
             label={t("type_into_active")}
             desc={t("type_into_active_desc")}

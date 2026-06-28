@@ -47,6 +47,21 @@ fn hide_to_pill(window: &tauri::Window) {
     }
 }
 
+/// Flip between the main window and the floating pill (the configurable global
+/// shortcut). Visible main folds into the pill; a hidden main comes back.
+fn toggle_main_pill(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        if w.is_visible().unwrap_or(false) {
+            let _ = w.hide();
+            if let Some(o) = app.get_webview_window("overlay") {
+                let _ = o.show();
+            }
+        } else {
+            show_main(app);
+        }
+    }
+}
+
 use crate::db::Db;
 use crate::paths::AppPaths;
 use crate::state::AppState;
@@ -116,29 +131,52 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    let (mode, recording) = {
+                .with_handler(|app, shortcut, event| {
+                    let (mode, recording, ptt_key, toggle_key) = {
                         let state = app.state::<AppState>();
-                        let mode = state.settings.read().capture_mode.clone();
-                        let recording = state.is_recording();
-                        (mode, recording)
+                        let s = state.settings.read();
+                        (
+                            s.capture_mode.clone(),
+                            state.is_recording(),
+                            s.ptt_hotkey.clone(),
+                            s.toggle_hotkey.clone(),
+                        )
                     };
-                    match event.state() {
-                        ShortcutState::Pressed => {
-                            if mode == "toggle" {
-                                if recording {
-                                    stop_and_notify(app);
-                                } else {
+                    // Both shortcuts arrive through this one handler; match the
+                    // fired accelerator against the configured strings to dispatch.
+                    let fired = |key: &str| {
+                        key.parse::<tauri_plugin_global_shortcut::Shortcut>()
+                            .map(|sc| &sc == shortcut)
+                            .unwrap_or(false)
+                    };
+
+                    // Window <-> pill toggle: act once, on press.
+                    if fired(&toggle_key) {
+                        if event.state() == ShortcutState::Pressed {
+                            toggle_main_pill(app);
+                        }
+                        return;
+                    }
+
+                    // Push-to-talk / toggle-record.
+                    if fired(&ptt_key) {
+                        match event.state() {
+                            ShortcutState::Pressed => {
+                                if mode == "toggle" {
+                                    if recording {
+                                        stop_and_notify(app);
+                                    } else {
+                                        start_and_notify(app);
+                                    }
+                                } else if !recording {
+                                    // hold / push-to-talk: press starts
                                     start_and_notify(app);
                                 }
-                            } else if !recording {
-                                // hold / push-to-talk: press starts
-                                start_and_notify(app);
                             }
-                        }
-                        ShortcutState::Released => {
-                            if mode == "hold" && recording {
-                                stop_and_notify(app);
+                            ShortcutState::Released => {
+                                if mode == "hold" && recording {
+                                    stop_and_notify(app);
+                                }
                             }
                         }
                     }
@@ -190,10 +228,11 @@ pub fn run() {
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
             let settings = db.load_settings();
             let hotkey = settings.ptt_hotkey.clone();
+            let toggle_hotkey = settings.toggle_hotkey.clone();
             let retention = settings.retention_days;
 
             app.manage(AppState::new(paths, db, settings));
-            let _ = commands::register_ptt(app.handle(), &hotkey);
+            let _ = commands::register_shortcuts(app.handle(), &hotkey, &toggle_hotkey);
 
             // Enforce the retention policy on launch: drop old recordings + audio
             // so storage never grows without bound.
