@@ -66,13 +66,14 @@ impl WhisperEngine {
         // probability) BEFORE decoding — this is what lets auto mode pick up the
         // Arabic dialect prime and report an honest confidence to the user.
         let (language, confidence): (String, f32) = match language_mode {
-            "en" => ("en".to_string(), 1.0),
-            "ar" => ("ar".to_string(), 1.0),
-            _ => detect_language(&mut state, audio_16k_mono, threads)
+            "auto" | "" => detect_language(&mut state, audio_16k_mono, threads)
                 .unwrap_or_else(|e| {
                     log::warn!("language detect failed, falling back to auto: {e}");
                     ("auto".to_string(), 0.0)
                 }),
+            // Any explicit code is honored as a forced language: en, ar, and the
+            // European set (fr/de/es/it/pt/nl...) all skip detection.
+            code => (code.to_string(), 1.0),
         };
 
         // Beam search beats greedy noticeably on accented / dialectal speech;
@@ -86,6 +87,10 @@ impl WhisperEngine {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        // Dictation is short and self-contained: don't carry decoded text forward
+        // as context between segments. Prevents the prior phrase from biasing (and
+        // hallucinating into) the next one — a common source of wrong words.
+        params.set_no_context(true);
         // Temperature fallback: retry hotter when a decode is low-confidence,
         // which is common with strong accents.
         params.set_temperature(0.0);

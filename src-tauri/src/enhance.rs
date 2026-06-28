@@ -220,9 +220,25 @@ pub fn run_api(
     })
 }
 
-/// Run `<command> -p --output-format text --append-system-prompt <system>` with
-/// `user_text` piped on stdin. Returns the CLI's stdout. Errors propagate so the
-/// caller can fall back to the raw transcript.
+/// Model used for the CLI path. This is a light text transform (clean up /
+/// translate / tidy a prompt), so we force a fast, cheap model instead of
+/// inheriting the user's configured default (which may be Opus at high effort).
+const CLI_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// Run the Claude Code CLI as a one-shot text transformer and return its stdout.
+/// Errors propagate so the caller can fall back to the raw transcript.
+///
+/// This task needs nothing the full agent loads — no tools, MCP servers, hooks,
+/// CLAUDE.md memory, plugins, or extended thinking. Every one of those is pure
+/// startup latency (and worse: the user's global CLAUDE.md / hooks can bleed into
+/// the output). So we strip the session down to the bone:
+///   --system-prompt        replace the giant default agent prompt with just ours
+///   --model <haiku>         fast/cheap model; this is not a reasoning task
+///   --effort low            no extended thinking before a grammar fix
+///   --tools ""              load no tool schemas, no agentic tool-use loop
+///   --safe-mode             disable CLAUDE.md / skills / plugins / hooks / MCP
+///                           (keeps subscription auth + model selection working)
+///   --no-session-persistence  don't write a session transcript to disk per call
 pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<String> {
     let command = command.trim();
     let exe = if command.is_empty() { "claude" } else { command };
@@ -231,8 +247,16 @@ pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<St
     cmd.arg("-p")
         .arg("--output-format")
         .arg("text")
-        .arg("--append-system-prompt")
+        .arg("--system-prompt")
         .arg(system_prompt)
+        .arg("--model")
+        .arg(CLI_MODEL)
+        .arg("--effort")
+        .arg("low")
+        .arg("--tools")
+        .arg("")
+        .arg("--safe-mode")
+        .arg("--no-session-persistence")
         .current_dir(std::env::temp_dir()) // neutral cwd: don't pick up a project CLAUDE.md
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

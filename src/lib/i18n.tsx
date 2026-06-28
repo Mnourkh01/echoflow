@@ -22,6 +22,7 @@ const STRINGS = {
   checking: { en: "Checking…", ar: "جارٍ التحقق…" },
   about: { en: "About", ar: "حول" },
   app_version: { en: "Version", ar: "الإصدار" },
+  manual_dl: { en: "Manual download:", ar: "تنزيل يدوي:" },
 
   // First-run model download
   first_run_title: { en: "Download the speech model", ar: "تنزيل نموذج الكلام" },
@@ -238,6 +239,53 @@ const STRINGS = {
   idle_5: { en: "5 min", ar: "5 دقائق" },
   idle_15: { en: "15 min", ar: "15 دقيقة" },
   idle_never: { en: "Never", ar: "أبداً" },
+
+  // Recognition language + diacritics
+  language_hint: {
+    en: "Force a language, or Auto to detect it. European languages keep their accents.",
+    ar: "افرض لغة، أو اختر تلقائي لكشفها. اللغات الأوروبية تحتفظ بعلاماتها.",
+  },
+  restore_diacritics: { en: "Restore accents (café, résumé)", ar: "استعادة العلامات (café، résumé)" },
+  restore_diacritics_desc: {
+    en: "Put diacritics back on common European loanwords in English output.",
+    ar: "يعيد العلامات التشكيلية على الكلمات الأوروبية الدخيلة في المخرجات الإنجليزية.",
+  },
+
+  // Onboarding walkthrough
+  ob_skip: { en: "Skip", ar: "تخطّي" },
+  ob_next: { en: "Next", ar: "التالي" },
+  ob_back: { en: "Back", ar: "السابق" },
+  ob_done: { en: "Get started", ar: "ابدأ الآن" },
+  ob_welcome_t: { en: "Welcome to EchoFlow", ar: "مرحباً بك في EchoFlow" },
+  ob_welcome_b: {
+    en: "Offline voice to text for Windows. Your speech is transcribed locally with Whisper, no cloud, no account, nothing leaves your PC.",
+    ar: "تحويل الصوت إلى نص دون اتصال على ويندوز. يُحوَّل كلامك محلياً عبر Whisper، بلا سحابة ولا حساب، ولا شيء يغادر جهازك.",
+  },
+  ob_ptt_t: { en: "Talk with one key", ar: "تحدّث بضغطة واحدة" },
+  ob_ptt_b: {
+    en: "Hold your global hotkey (default Ctrl+Shift+Space) anywhere and speak, or press once in Toggle mode. The text types straight into whatever app you're in.",
+    ar: "اضغط مطوّلاً اختصارك العام (افتراضياً Ctrl+Shift+Space) في أي مكان وتحدث، أو اضغطه مرة في وضع التبديل. يُكتب النص مباشرة في التطبيق الذي تستخدمه.",
+  },
+  ob_modes_t: { en: "Four ways to output", ar: "أربع طرق للمخرجات" },
+  ob_modes_b: {
+    en: "Raw text, Clean writing, Prompt mode, or Translate to English. Switch from the header or by right-clicking the tray icon.",
+    ar: "نص كما هو، أو تحسين الصياغة، أو وضع البرومبت، أو الترجمة إلى الإنجليزية. بدّل بينها من الأعلى أو بالنقر بالزر الأيمن على أيقونة الشريط.",
+  },
+  ob_lang_t: { en: "Languages & accents", ar: "اللغات واللهجات" },
+  ob_lang_b: {
+    en: "English, Arabic with dialects, and European languages with full diacritics. Auto-detect handles mixed speech.",
+    ar: "الإنجليزية، والعربية بلهجاتها، ولغات أوروبية بعلاماتها التشكيلية الكاملة. الكشف التلقائي يتعامل مع الكلام المختلط.",
+  },
+  ob_hist_t: { en: "History & prompts", ar: "السجل والبرومبتات" },
+  ob_hist_b: {
+    en: "Every transcript is saved locally and searchable. Pin the ones you want to keep and save good prompts to reuse.",
+    ar: "يُحفظ كل نص محلياً وقابل للبحث. ثبّت ما تريد الاحتفاظ به واحفظ البرومبتات الجيدة لإعادة استخدامها.",
+  },
+  ob_setup_t: { en: "Make it yours", ar: "خصّصه لك" },
+  ob_setup_b: {
+    en: "Pick a bigger model for higher accuracy, choose your mic and hotkey, and set how long history is kept, all in Settings.",
+    ar: "اختر نموذجاً أكبر لدقة أعلى، واختر ميكروفونك واختصارك، وحدّد مدة حفظ السجل، كلها في الإعدادات.",
+  },
 
   cancel: { en: "Cancel", ar: "إلغاء" },
   save: { en: "Save", ar: "حفظ" },

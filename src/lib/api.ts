@@ -42,7 +42,7 @@ export type OutputMode = "raw" | "translate" | "polish" | "prompt";
 export interface Settings {
   input_device: string | null;
   model: string;
-  language_mode: "auto" | "en" | "ar";
+  language_mode: string; // "auto" | "en" | "ar" | European codes (fr, de, es, it, pt, nl)
   dialect: string; // "auto" | egyptian | levantine | gulf | iraqi | maghrebi
   ptt_hotkey: string;
   capture_mode: "hold" | "toggle";
@@ -53,6 +53,7 @@ export interface Settings {
   noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;
+  restore_diacritics: boolean;
   ai_engine: "cli" | "api";
   cli_command: string;
   api_provider: "anthropic" | "openai" | "custom";
@@ -63,6 +64,7 @@ export interface Settings {
   theme: string;
   retention_days: number; // auto-delete recordings older than this; 0 = keep all
   idle_unload_minutes: number; // free model from RAM after idle; 0 = keep loaded
+  onboarded: boolean; // first-run walkthrough has been seen/skipped
 }
 
 export interface ApiUsage {

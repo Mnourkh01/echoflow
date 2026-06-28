@@ -24,9 +24,12 @@ use crate::state::AppState;
 const KNOWN_MODELS: [&str; 6] = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"];
 
 /// Below this raw RMS the clip is treated as silence (a mis-click) and discarded.
-const SILENCE_RMS: f32 = 0.005;
+/// Kept deliberately low so whispered / very quiet speech still gets through;
+/// loudness normalization (audio.rs) then lifts it to a level Whisper can read.
+const SILENCE_RMS: f32 = 0.0010;
 /// Peak level that counts as someone actually speaking (for the silence guard).
-const SPEECH_LEVEL: f32 = 0.05;
+/// Low enough that a whisper trips it, high enough to ignore room tone.
+const SPEECH_LEVEL: f32 = 0.012;
 /// If no speech is heard within this long after starting, auto-cancel.
 const NO_SPEECH_GRACE: Duration = Duration::from_secs(15);
 
@@ -465,6 +468,13 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         }
     }
 
+    // Restore Latin diacritics on English output (cafe -> café, resume -> résumé,
+    // naive -> naïve...). Whisper routinely drops the accent on these loanwords;
+    // a small offline dictionary puts it back. Toggleable in settings.
+    if transcript.language == "en" && state.settings.read().restore_diacritics {
+        transcript.full_text = crate::text::restore_diacritics(&transcript.full_text);
+    }
+
     let stamp = Utc::now().timestamp_millis();
     let audio_path = state.paths.new_audio_path(stamp);
     write_wav_16k(&audio_path, &audio_16k).map_err(|e| e.to_string())?;
@@ -655,6 +665,11 @@ pub fn get_settings(state: State<AppState>) -> Settings {
 /// Returns whether the global hotkey registered successfully.
 #[tauri::command]
 pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R<bool> {
+    // Re-registering the global hotkey calls unregister_all(), which would briefly
+    // kill push-to-talk. Settings saves happen on every mode / language switch, so
+    // only touch the shortcut when the hotkey itself actually changed — otherwise
+    // switching clean/prompt/translate silently dropped voice detection.
+    let old_hotkey = state.settings.read().ptt_hotkey.clone();
     state.db.save_settings(&settings).map_err(|e| e.to_string())?;
     let hotkey = settings.ptt_hotkey.clone();
     let retention = settings.retention_days;
@@ -665,7 +680,14 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
             let _ = std::fs::remove_file(p);
         }
     }
-    Ok(register_ptt(&app, &hotkey))
+    // Keep the tray's mode menu in sync with changes made in the UI.
+    crate::refresh_tray_menu(&app);
+    let ok = if hotkey != old_hotkey {
+        register_ptt(&app, &hotkey)
+    } else {
+        true // unchanged: leave the live shortcut intact
+    };
+    Ok(ok)
 }
 
 #[tauri::command]

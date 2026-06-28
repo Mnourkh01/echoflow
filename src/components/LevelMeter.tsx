@@ -16,15 +16,20 @@ export default function LevelMeter({ level, active }: Props) {
         const threshold = i / bars;
         const lit = active && peak * envelope > threshold * 0.5;
         const height = lit ? 8 + peak * envelope * 28 : 4;
+        // When recording but quiet, bars breathe so the meter never looks frozen.
+        // Stagger each bar's phase so it ripples rather than pulsing in unison.
+        const breathe = active && !lit;
         return (
           <span
             key={i}
-            className={lit ? "bg-accent" : "bg-ink-700"}
+            className={`${lit ? "bg-accent" : breathe ? "bg-accent/40" : "bg-ink-700"}${breathe ? " echo-breathe" : ""}`}
             style={{
               width: 3,
               height,
               borderRadius: 999,
               transition: "height 80ms linear",
+              boxShadow: lit ? "0 0 8px rgba(61,123,247,0.7)" : undefined,
+              animationDelay: breathe ? `${(i % 7) * 0.12}s` : undefined,
             }}
           />
         );

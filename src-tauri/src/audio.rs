@@ -180,16 +180,48 @@ pub fn resample(mono: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || mono.is_empty() {
         return mono.to_vec();
     }
+    // Anti-alias when downsampling (e.g. 44.1/48 kHz mics -> 16 kHz): a short
+    // moving-average low-pass before linear interpolation tames the aliasing that
+    // otherwise smears consonants and hurts recognition accuracy. Upsampling
+    // (the denoise path's 48 kHz hop) needs no pre-filter.
+    let filtered;
+    let src: &[f32] = if to_rate < from_rate {
+        let width = ((from_rate as f32 / to_rate as f32).round() as usize).max(2);
+        filtered = box_filter(mono, width);
+        &filtered
+    } else {
+        mono
+    };
     let ratio = to_rate as f64 / from_rate as f64;
-    let out_len = ((mono.len() as f64) * ratio).round() as usize;
+    let out_len = ((src.len() as f64) * ratio).round() as usize;
     let mut out = Vec::with_capacity(out_len);
     for i in 0..out_len {
-        let src = i as f64 / ratio;
-        let idx = src.floor() as usize;
-        let frac = (src - idx as f64) as f32;
-        let a = mono.get(idx).copied().unwrap_or(0.0);
-        let b = mono.get(idx + 1).copied().unwrap_or(a);
+        let pos = i as f64 / ratio;
+        let idx = pos.floor() as usize;
+        let frac = (pos - idx as f64) as f32;
+        let a = src.get(idx).copied().unwrap_or(0.0);
+        let b = src.get(idx + 1).copied().unwrap_or(a);
         out.push(a + (b - a) * frac);
+    }
+    out
+}
+
+/// Trailing moving average of width `width`. Cheap O(n) low-pass used as a crude
+/// anti-alias filter ahead of downsampling. The small phase shift is irrelevant
+/// for speech recognition.
+fn box_filter(x: &[f32], width: usize) -> Vec<f32> {
+    if width <= 1 {
+        return x.to_vec();
+    }
+    let mut out = Vec::with_capacity(x.len());
+    let mut sum = 0f32;
+    for i in 0..x.len() {
+        sum += x[i];
+        if i >= width {
+            sum -= x[i - width];
+        }
+        let count = (i + 1).min(width) as f32;
+        out.push(sum / count);
     }
     out
 }
@@ -220,15 +252,25 @@ fn denoise_48k(mono48: &[f32]) -> Vec<f32> {
     out
 }
 
-/// Peak-normalize so quiet mics produce a strong enough signal for Whisper.
-/// Weak audio is the main cause of wrong language detection and gibberish.
-/// Gain is capped so near-silent clips don't get blown up into noise.
-fn normalize_peak(samples: &mut [f32], target: f32, max_gain: f32) {
+/// Loudness-normalize so quiet mics and whispered speech produce a strong,
+/// consistent signal for Whisper. We push the RMS up to a whisper-friendly
+/// target rather than just the peak: peak-only normalization barely lifts quiet
+/// speech (a single transient pins the gain), which is why whispering used to be
+/// missed or transcribed as gibberish. Pure silence is left alone, and the raw
+/// RMS gate in `commands` runs *before* this, so we only ever boost real audio.
+fn normalize_loudness(samples: &mut [f32], target_rms: f32, max_gain: f32) {
     let peak = samples.iter().fold(0f32, |m, &s| m.max(s.abs()));
     if peak < 1e-4 {
         return; // effectively silence; leave it alone
     }
-    let gain = (target / peak).min(max_gain);
+    let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+    let rms = (sum_sq / samples.len().max(1) as f64).sqrt() as f32;
+    if rms < 1e-6 {
+        return;
+    }
+    // Bring RMS up to target; clamp handles the rare transient that clips. For
+    // dictation, consistent loudness matters far more than sparing a click.
+    let gain = (target_rms / rms).min(max_gain);
     if gain > 1.0 {
         for s in samples.iter_mut() {
             *s = (*s * gain).clamp(-1.0, 1.0);
@@ -249,7 +291,7 @@ pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> 
     } else {
         resample_to_16k(&mono, captured.sample_rate)
     };
-    normalize_peak(&mut out, 0.95, 25.0);
+    normalize_loudness(&mut out, 0.12, 120.0);
     let min_len = TARGET_RATE as usize;
     if out.len() < min_len {
         out.resize(min_len, 0.0);

@@ -25,28 +25,40 @@ export default function RecordControl({ state, level, elapsedMs, onToggle }: Pro
 
   return (
     <div className="flex flex-col items-center gap-4 py-6">
-      <button
-        onClick={onToggle}
-        disabled={busy}
-        aria-label={recording ? t("stop_recording") : t("start_recording")}
-        className={[
-          "relative grid h-24 w-24 place-items-center rounded-full transition",
-          "outline-none focus-visible:ring-4 focus-visible:ring-accent/40",
-          busy
-            ? "cursor-wait bg-ink-800 text-ink-400"
-            : recording
-              ? "bg-accent text-white shadow-[0_0_0_8px_rgba(61,123,247,0.18)]"
-              : "bg-ink-800 text-ink-400 hover:bg-ink-700 hover:text-white",
-        ].join(" ")}
-      >
-        {busy ? (
-          <Loader2 className="h-9 w-9 animate-spin" />
-        ) : recording ? (
-          <Square className="h-8 w-8" fill="currentColor" />
-        ) : (
-          <Mic className="h-9 w-9" />
+      <div className="relative grid h-24 w-24 place-items-center">
+        {/* Expanding sonar rings while recording — the "alive / listening" cue. */}
+        {recording && (
+          <>
+            <span className="echo-ring pointer-events-none absolute inset-0 rounded-full bg-accent/30" />
+            <span
+              className="echo-ring pointer-events-none absolute inset-0 rounded-full bg-accent-deep/25"
+              style={{ animationDelay: "0.9s" }}
+            />
+          </>
         )}
-      </button>
+        <button
+          onClick={onToggle}
+          disabled={busy}
+          aria-label={recording ? t("stop_recording") : t("start_recording")}
+          className={[
+            "relative grid h-24 w-24 place-items-center rounded-full transition",
+            "outline-none focus-visible:ring-4 focus-visible:ring-accent/40",
+            busy
+              ? "echo-glow cursor-wait bg-gradient-to-br from-accent-deep to-accent text-white"
+              : recording
+                ? "echo-glow bg-gradient-to-br from-accent to-accent-deep text-white"
+                : "bg-ink-800 text-ink-400 hover:bg-ink-700 hover:text-white hover:shadow-[0_0_18px_2px_rgba(61,123,247,0.35)]",
+          ].join(" ")}
+        >
+          {busy ? (
+            <Loader2 className="h-9 w-9 animate-spin" />
+          ) : recording ? (
+            <Square className="h-8 w-8" fill="currentColor" />
+          ) : (
+            <Mic className="h-9 w-9" />
+          )}
+        </button>
+      </div>
 
       <div className="h-10 w-full max-w-sm">
         <LevelMeter level={level} active={recording} />

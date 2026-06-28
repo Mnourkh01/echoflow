@@ -6,9 +6,30 @@ import { relaunch } from "@tauri-apps/plugin-process";
 
 export type { Update };
 
-/** Returns an available update, or null if already on the latest version. */
-export async function checkForUpdate(): Promise<Update | null> {
-  return await check();
+/**
+ * Returns an available update, or null if already on the latest version.
+ * Races against a timeout so a stalled network never leaves the UI "checking…"
+ * forever — it rejects with a clear message instead.
+ */
+export async function checkForUpdate(timeoutMs = 15000): Promise<Update | null> {
+  // `timeout` is passed into the Rust HTTP request so a stalled connection is
+  // actually aborted at the network layer (not just abandoned by the UI). The
+  // Promise.race is a belt-and-suspenders guard in case the plugin call itself
+  // never settles — either way the UI stops "checking…" after timeoutMs.
+  return await Promise.race([
+    check({ timeout: timeoutMs }),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              "Update check timed out. Check your connection, or download the latest version manually.",
+            ),
+          ),
+        timeoutMs + 2000,
+      ),
+    ),
+  ]);
 }
 
 /**

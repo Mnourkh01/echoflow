@@ -44,6 +44,7 @@ pub struct Settings {
     pub noise_suppression: bool, // RNNoise denoise on the mic before transcription
     pub output_mode: String,  // "raw" | "translate" | "polish" | "prompt"
     pub translate_target: String, // language name to translate INTO (e.g. "English")
+    pub restore_diacritics: bool, // put accents back on English loanwords (café, résumé)
     pub ai_engine: String,    // "cli" (default) | "api"
     pub cli_command: String,  // CLI used when ai_engine == "cli" (e.g. "claude")
     pub api_provider: String, // "anthropic" | "openai" | "custom"
@@ -54,6 +55,7 @@ pub struct Settings {
     pub theme: String,
     pub retention_days: i64,  // auto-delete recordings older than this; 0 = keep everything
     pub idle_unload_minutes: i64, // free the model from RAM after this idle; 0 = keep loaded
+    pub onboarded: bool,      // first-run walkthrough has been seen/skipped
 }
 
 impl Default for Settings {
@@ -72,6 +74,7 @@ impl Default for Settings {
             noise_suppression: true,
             output_mode: "raw".to_string(),
             translate_target: "English".to_string(),
+            restore_diacritics: true,
             ai_engine: "cli".to_string(),
             cli_command: "claude".to_string(),
             api_provider: "anthropic".to_string(),
@@ -82,6 +85,7 @@ impl Default for Settings {
             theme: "dark".to_string(),
             retention_days: 14,
             idle_unload_minutes: 5,
+            onboarded: false,
         }
     }
 }

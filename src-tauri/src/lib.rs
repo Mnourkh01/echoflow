@@ -6,6 +6,7 @@ mod export;
 mod models;
 mod paths;
 mod state;
+mod text;
 mod whisper;
 
 use tauri::menu::{Menu, MenuItem};
@@ -49,6 +50,58 @@ fn hide_to_pill(window: &tauri::Window) {
 use crate::db::Db;
 use crate::paths::AppPaths;
 use crate::state::AppState;
+
+/// Build the tray context menu, ticking whichever output mode is active. Rebuilt
+/// (not mutated) on every change so the checkmarks always reflect the setting.
+fn build_tray_menu(app: &tauri::AppHandle, mode: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::{CheckMenuItem, PredefinedMenuItem};
+    let show = MenuItem::with_id(app, "show", "Open EchoFlow", true, None::<&str>)?;
+    let raw = CheckMenuItem::with_id(app, "mode_raw", "Raw text", true, mode == "raw", None::<&str>)?;
+    let polish =
+        CheckMenuItem::with_id(app, "mode_polish", "Clean writing", true, mode == "polish", None::<&str>)?;
+    let prompt =
+        CheckMenuItem::with_id(app, "mode_prompt", "Prompt mode", true, mode == "prompt", None::<&str>)?;
+    let translate = CheckMenuItem::with_id(
+        app,
+        "mode_translate",
+        "Translate to English",
+        true,
+        mode == "translate",
+        None::<&str>,
+    )?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &sep1, &raw, &polish, &prompt, &translate, &sep2, &quit])
+}
+
+/// Rebuild the tray menu so its mode checkmarks match the current setting. Safe
+/// to call from anywhere (tray click, UI settings save).
+pub fn refresh_tray_menu(app: &tauri::AppHandle) {
+    let mode = app.state::<AppState>().settings.read().output_mode.clone();
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(menu) = build_tray_menu(app, &mode) {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
+/// Apply an output mode chosen from the tray: persist it and tell the UI so the
+/// header switcher stays in sync. Translate always targets English from the tray.
+fn apply_output_mode(app: &tauri::AppHandle, mode: &str) {
+    let state = app.state::<AppState>();
+    let settings = {
+        let mut s = state.settings.write();
+        s.output_mode = mode.to_string();
+        if mode == "translate" {
+            s.translate_target = "English".to_string();
+        }
+        s.clone()
+    };
+    let _ = state.db.save_settings(&settings);
+    refresh_tray_menu(app);
+    let _ = app.emit("settings-changed", settings);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -159,17 +212,22 @@ pub fn run() {
             }
 
             // Tray icon: the app keeps living here when minimized to the pill,
-            // so it stays off the taskbar but is one click away.
-            let show_item = MenuItem::with_id(app, "show", "Open EchoFlow", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            let mut tray = TrayIconBuilder::new()
+            // so it stays off the taskbar but is one click away. Right-click also
+            // switches output mode (raw / clean / prompt / translate) without
+            // opening the window.
+            let mode = app.state::<AppState>().settings.read().output_mode.clone();
+            let menu = build_tray_menu(app.handle(), &mode)?;
+            let mut tray = TrayIconBuilder::with_id("main")
                 .tooltip("EchoFlow")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "quit" => app.exit(0),
+                    "mode_raw" => apply_output_mode(app, "raw"),
+                    "mode_polish" => apply_output_mode(app, "polish"),
+                    "mode_prompt" => apply_output_mode(app, "prompt"),
+                    "mode_translate" => apply_output_mode(app, "translate"),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

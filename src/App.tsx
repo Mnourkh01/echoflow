@@ -8,8 +8,10 @@ import HistorySidebar, { type SidebarTab } from "./components/HistorySidebar";
 import PromptView from "./components/PromptView";
 import SettingsPanel from "./components/SettingsPanel";
 import ModeSwitcher from "./components/ModeSwitcher";
+import LanguageSwitcher from "./components/LanguageSwitcher";
 import UpdateBanner from "./components/UpdateBanner";
 import FirstRunModel from "./components/FirstRunModel";
+import Onboarding from "./components/Onboarding";
 import { api, type AppStatus, type OutputMode, type Prompt, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
 import { checkForUpdate, type Update } from "./lib/updater";
 import { I18nProvider, translate } from "./lib/i18n";
@@ -172,12 +174,15 @@ export default function App() {
       setLevel(0);
       flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
     });
+    // Output mode (and other settings) can change from the tray menu; keep the UI in sync.
+    const offSettings = listen<Settings>("settings-changed", (e) => setSettings(e.payload));
     return () => {
       offStarted.then((f) => f());
       offStopped.then((f) => f());
       offResult.then((f) => f());
       offError.then((f) => f());
       offCanceled.then((f) => f());
+      offSettings.then((f) => f());
     };
   }, [refreshHistory, flashNotice]);
 
@@ -200,8 +205,8 @@ export default function App() {
     }
   }, []);
 
-  // Quick language change from the header (Auto / EN / AR): persist immediately.
-  const changeLang = useCallback(async (mode: "auto" | "en" | "ar") => {
+  // Quick language change from the header (Auto / EN / AR / European): persist now.
+  const changeLang = useCallback(async (mode: string) => {
     if (!settingsRef.current) return;
     const next = { ...settingsRef.current, language_mode: mode };
     setSettings(next);
@@ -209,6 +214,18 @@ export default function App() {
       await api.updateSettings(next);
     } catch (e) {
       setError(String(e));
+    }
+  }, []);
+
+  // Mark the first-run walkthrough as seen (skip or finish), persist it.
+  const completeOnboarding = useCallback(async () => {
+    if (!settingsRef.current) return;
+    const next = { ...settingsRef.current, onboarded: true };
+    setSettings(next);
+    try {
+      await api.updateSettings(next);
+    } catch {
+      /* non-fatal */
     }
   }, []);
 
@@ -294,22 +311,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             {settings && (
-              <div className="flex items-center rounded-lg bg-ink-900 p-0.5 text-xs" title={translate(uiLang, "language")}>
-                {(["auto", "en", "ar"] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => changeLang(m)}
-                    className={[
-                      "rounded-md px-2 py-1 transition",
-                      settings.language_mode === m
-                        ? "bg-accent text-white"
-                        : "text-ink-400 hover:text-white",
-                    ].join(" ")}
-                  >
-                    {m === "auto" ? translate(uiLang, "auto_detect") : m.toUpperCase()}
-                  </button>
-                ))}
-              </div>
+              <LanguageSwitcher value={settings.language_mode} onChange={changeLang} />
             )}
             {settings && (
               <ModeSwitcher value={settings.output_mode} onChange={changeMode} />
@@ -365,6 +367,10 @@ export default function App() {
         <FirstRunModel
           onReady={() => api.appStatus().then(setStatus).catch(() => {})}
         />
+      )}
+
+      {status?.model_present && settings && !settings.onboarded && (
+        <Onboarding onClose={completeOnboarding} />
       )}
 
       <SettingsPanel

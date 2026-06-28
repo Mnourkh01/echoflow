@@ -43,6 +43,20 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "Korean", label: "한국어" },
 ];
 
+// Recognition languages (what Whisper transcribes). "auto" is added in the UI.
+// Value is the Whisper code; label is the native name. European entries carry
+// their diacritics natively.
+const REC_LANGS: { code: string; label: string }[] = [
+  { code: "en", label: "English" },
+  { code: "ar", label: "العربية" },
+  { code: "fr", label: "Français" },
+  { code: "de", label: "Deutsch" },
+  { code: "es", label: "Español" },
+  { code: "it", label: "Italiano" },
+  { code: "pt", label: "Português" },
+  { code: "nl", label: "Nederlands" },
+];
+
 // Retention windows offered to the user. 0 = keep everything.
 const RETENTION: [number, StringKey][] = [
   [7, "retain_1w"],
@@ -563,25 +577,22 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
           </Field>
 
           <Field label={t("language")}>
-            <div className="flex gap-2">
-              {(["auto", "en", "ar"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => patch({ language_mode: m })}
-                  className={[
-                    "flex-1 rounded-lg px-3 py-2 text-sm transition",
-                    settings.language_mode === m
-                      ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
-                  ].join(" ")}
-                >
-                  {m === "auto" ? t("auto_detect") : m === "en" ? t("english") : t("arabic")}
-                </button>
+            <select
+              value={settings.language_mode}
+              onChange={(e) => patch({ language_mode: e.target.value })}
+              className="field"
+            >
+              <option value="auto">{t("auto_detect")}</option>
+              {REC_LANGS.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.label}
+                </option>
               ))}
-            </div>
+            </select>
+            <p className="mt-1.5 text-xs text-ink-500">{t("language_hint")}</p>
           </Field>
 
-          {settings.language_mode !== "en" && (
+          {(settings.language_mode === "ar" || settings.language_mode === "auto") && (
             <Field label={t("dialect")}>
               <select
                 value={settings.dialect}
@@ -597,6 +608,13 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               <p className="mt-1.5 text-xs text-ink-500">{t("dialect_hint")}</p>
             </Field>
           )}
+
+          <Toggle
+            label={t("restore_diacritics")}
+            desc={t("restore_diacritics_desc")}
+            checked={settings.restore_diacritics}
+            onChange={(v) => patch({ restore_diacritics: v })}
+          />
 
           <Field label={t("hotkey_mode")}>
             <div className="flex gap-2">
@@ -759,6 +777,12 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               </button>
             </div>
             {updateMsg && <p className="mt-1.5 text-xs text-ink-500">{updateMsg}</p>}
+            <p className="mt-1.5 text-xs text-ink-500">
+              {t("manual_dl")}{" "}
+              <span className="selectable text-accent-soft">
+                github.com/Mnourkh01/echoflow/releases/latest
+              </span>
+            </p>
           </Field>
         </div>
 
