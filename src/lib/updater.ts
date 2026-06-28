@@ -3,8 +3,38 @@
 
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 
 export type { Update };
+
+const NOTIFIED_KEY = "echoflow_notified_update";
+
+/**
+ * Fire ONE native OS notification for a given update version. Deduped via
+ * localStorage so the same version never nags the user more than once, even
+ * across the daily auto-checks. Best-effort: silently no-ops if notifications
+ * are denied or unavailable.
+ */
+export async function notifyUpdateOnce(
+  version: string,
+  title: string,
+  body: string,
+): Promise<void> {
+  try {
+    if (localStorage.getItem(NOTIFIED_KEY) === version) return;
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    if (!granted) return;
+    sendNotification({ title, body });
+    localStorage.setItem(NOTIFIED_KEY, version);
+  } catch {
+    /* notifications are best-effort; never block the app */
+  }
+}
 
 /**
  * Returns an available update, or null if already on the latest version.

@@ -15,6 +15,10 @@ const STRINGS = {
 
   // Updates
   update_available: { en: "Update available", ar: "تحديث متاح" },
+  update_notif_body: {
+    en: "A new version is ready. Open EchoFlow to update.",
+    ar: "إصدار جديد جاهز. افتح EchoFlow للتحديث.",
+  },
   update_now: { en: "Update now", ar: "حدّث الآن" },
   updating: { en: "Updating", ar: "جارٍ التحديث" },
   up_to_date: { en: "You're on the latest version", ar: "أنت على أحدث إصدار" },

@@ -13,7 +13,7 @@ import UpdateBanner from "./components/UpdateBanner";
 import FirstRunModel from "./components/FirstRunModel";
 import Onboarding from "./components/Onboarding";
 import { api, type AppStatus, type OutputMode, type Prompt, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
-import { checkForUpdate, type Update } from "./lib/updater";
+import { checkForUpdate, notifyUpdateOnce, type Update } from "./lib/updater";
 import { I18nProvider, translate } from "./lib/i18n";
 import { playStart, playStop } from "./lib/sound";
 
@@ -59,9 +59,37 @@ export default function App() {
     api.getSettings().then(setSettings).catch(() => {});
     refreshHistory();
     refreshPrompts().catch(() => {});
-    // Quietly check for an update on launch; a hit renders the banner.
-    checkForUpdate().then(setUpdate).catch(() => {});
   }, [refreshHistory, refreshPrompts]);
+
+  // Check for updates on launch and once a day after, so a long-running
+  // (tray-resident) app finds new versions on its own. A hit shows the in-app
+  // banner and fires a single OS notification per version (never nags).
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const upd = await checkForUpdate();
+        if (cancelled) return;
+        setUpdate(upd);
+        if (upd) {
+          const lang = settingsRef.current?.ui_lang ?? "en";
+          notifyUpdateOnce(
+            upd.version,
+            `${translate(lang, "update_available")} v${upd.version}`,
+            translate(lang, "update_notif_body"),
+          );
+        }
+      } catch {
+        /* offline or transient; retry on the next interval */
+      }
+    };
+    run();
+    const id = window.setInterval(run, 24 * 60 * 60 * 1000); // daily
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   const start = useCallback(async () => {
     if (recStateRef.current !== "idle") return;
