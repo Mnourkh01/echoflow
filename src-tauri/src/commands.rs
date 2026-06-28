@@ -430,10 +430,26 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let mut transcript = state
         .transcribe(&audio_16k, &model, &lang_mode, false, &dialect)
         .map_err(|e| e.to_string())?;
+    // Language the user actually spoke (detected in auto mode, or the forced code).
+    let source_lang = transcript.language.clone();
+
+    // In Translate mode, if the spoken language already matches the target (e.g.
+    // English speech with target = English) there is nothing to translate, and
+    // running the model anyway tends to drift or paraphrase out of scope. Detect
+    // that, skip the CLI, keep the user's own words, and raise a warning the UI +
+    // pill surface so they know they're still on Translate.
+    let mut translate_warning = false;
 
     // translate / polish / prompt run the transcript through the local CLI.
     let cli_system: Option<String> = match output_mode.as_str() {
-        "translate" => Some(enhance::translate_system(&translate_target)),
+        "translate" => {
+            if source_lang == lang_code_for(&translate_target) {
+                translate_warning = true;
+                None
+            } else {
+                Some(enhance::translate_system(&translate_target))
+            }
+        }
         "polish" => Some(enhance::POLISH_SYSTEM.to_string()),
         "prompt" => Some(enhance::PROMPT_SYSTEM.to_string()),
         _ => None,
@@ -525,6 +541,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         full_text: transcript.full_text,
         pinned: false,
         segments: transcript.segments,
+        translate_warning,
     }))
 }
 
@@ -736,18 +753,41 @@ pub fn app_status(state: State<AppState>) -> AppStatus {
 
 // ---- Pill / overlay window menu ------------------------------------------
 
-/// Native right-click menu on the floating pill: Open / Maximize / Close.
-/// Items are handled by the app-level menu handler in `lib.rs` (ids `pill_*`).
+/// Native right-click menu on the floating pill. Top section switches output
+/// mode (raw / clean / prompt / translate) with a tick on the active one, so the
+/// user can change mode from the pill without opening the window. Items are
+/// handled by the app-level menu handler in `lib.rs` (ids `pill_*`).
 #[tauri::command]
 pub fn show_pill_menu(app: AppHandle) -> R<()> {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+
+    let mode = app.state::<AppState>().settings.read().output_mode.clone();
+    let check = |id: &str, label: &str, on: bool| {
+        CheckMenuItem::with_id(&app, id, label, true, on, None::<&str>).map_err(|e| e.to_string())
+    };
+
+    let raw = check("pill_mode_raw", "Raw text", mode == "raw")?;
+    let polish = check("pill_mode_polish", "Clean writing", mode == "polish")?;
+    let prompt = check("pill_mode_prompt", "Prompt mode", mode == "prompt")?;
+    let translate = check("pill_mode_translate", "Translate to English", mode == "translate")?;
+
+    let sep1 = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+    let sep2 = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+
     let open = MenuItem::with_id(&app, "pill_open", "Open EchoFlow", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let maximize = MenuItem::with_id(&app, "pill_max", "Maximize", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let quit = MenuItem::with_id(&app, "pill_quit", "Close EchoFlow", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&open, &maximize, &quit]).map_err(|e| e.to_string())?;
+
+    let menu = Menu::with_items(
+        &app,
+        &[
+            &raw, &polish, &prompt, &translate, &sep1, &open, &maximize, &sep2, &quit,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     if let Some(overlay) = app.get_webview_window("overlay") {
         overlay.popup_menu(&menu).map_err(|e| e.to_string())?;
     }

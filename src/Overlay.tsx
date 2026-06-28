@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { Languages } from "lucide-react";
 import { api } from "./lib/api";
 import logo from "./assets/echoflow.png";
 
@@ -17,6 +18,9 @@ const BARS = [0.45, 0.8, 1, 0.65, 0.95, 0.55, 0.85];
 export default function Overlay() {
   const [mode, setMode] = useState<Mode>("idle");
   const [level, setLevel] = useState(0);
+  // Briefly true after a Translate-mode dictation that was already in the target
+  // language (nothing to translate) so the pill can flag "you're still on Translate".
+  const [warn, setWarn] = useState(false);
   const self = getCurrentWindow();
 
   useEffect(() => {
@@ -29,7 +33,15 @@ export default function Overlay() {
       }
     });
     const offStop = listen("rec-stopped", () => setMode("processing"));
-    const offResult = listen("dictation-result", () => finish());
+    const offResult = listen<{ translate_warning?: boolean }>("dictation-result", (e) => {
+      if (e.payload?.translate_warning) {
+        setWarn(true);
+        window.setTimeout(() => setWarn(false), 2800);
+        finish(2800); // hold the pill open long enough to read the warning
+      } else {
+        finish();
+      }
+    });
     const offError = listen("rec-error", () => finish());
     const offCanceled = listen("rec-canceled", () => finish());
     return () => {
@@ -55,7 +67,7 @@ export default function Overlay() {
     return () => clearInterval(id);
   }, [mode]);
 
-  function finish() {
+  function finish(hideDelay = 1100) {
     setMode("idle");
     setLevel(0);
     // Hide after a beat, but stay if the app is minimized into the pill.
@@ -71,7 +83,7 @@ export default function Overlay() {
           /* ignore */
         }
       }
-    }, 1100);
+    }, hideDelay);
   }
 
   async function restore() {
@@ -97,31 +109,45 @@ export default function Overlay() {
         e.preventDefault();
         api.showPillMenu().catch(() => {});
       }}
-      className="flex h-screen w-screen cursor-grab items-center gap-2 rounded-full border border-white/10 bg-ink-900/95 px-2 shadow-2xl"
+      className={[
+        "flex h-screen w-screen cursor-grab items-center gap-2 rounded-full border bg-ink-900/95 px-2 shadow-2xl transition-colors",
+        warn ? "border-amber-400/70" : "border-white/10",
+      ].join(" ")}
     >
-      <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center gap-[3px]">
-        {BARS.map((b, i) => {
-          const h = processing
-            ? 55
-            : active
-              ? Math.max(16, Math.min(100, 16 + level * 95 * b))
-              : 20 * b;
-          return (
-            <span
-              key={i}
-              className={[
-                "w-[2px] rounded-full transition-[height] duration-100",
-                active
-                  ? "bg-accent"
-                  : processing
-                    ? "bg-accent/70 animate-pulse"
-                    : "bg-ink-600",
-              ].join(" ")}
-              style={{ height: `${h}%` }}
-            />
-          );
-        })}
-      </div>
+      {warn ? (
+        <div
+          data-tauri-drag-region
+          className="flex h-4 flex-1 items-center justify-center gap-1 text-amber-300"
+          title="You spoke the language you're translating to. Switch mode?"
+        >
+          <Languages className="h-3 w-3 shrink-0" />
+          <span className="text-[10px] font-medium leading-none">On Translate</span>
+        </div>
+      ) : (
+        <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center gap-[3px]">
+          {BARS.map((b, i) => {
+            const h = processing
+              ? 55
+              : active
+                ? Math.max(16, Math.min(100, 16 + level * 95 * b))
+                : 20 * b;
+            return (
+              <span
+                key={i}
+                className={[
+                  "w-[2px] rounded-full transition-[height] duration-100",
+                  active
+                    ? "bg-accent"
+                    : processing
+                      ? "bg-accent/70 animate-pulse"
+                      : "bg-ink-600",
+                ].join(" ")}
+                style={{ height: `${h}%` }}
+              />
+            );
+          })}
+        </div>
+      )}
       <button
         onClick={restore}
         title="Open EchoFlow"

@@ -19,6 +19,9 @@ export interface RecordingResult {
   full_text: string;
   pinned: boolean;
   segments: Segment[];
+  // True when a fresh Translate-mode dictation was spoken in the target language
+  // already (nothing to translate). The native words are kept and the UI warns.
+  translate_warning?: boolean;
 }
 
 export interface RecordingSummary {

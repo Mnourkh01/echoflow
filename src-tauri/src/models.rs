@@ -16,6 +16,11 @@ pub struct RecordingResult {
     pub full_text: String,
     pub pinned: bool,
     pub segments: Vec<Segment>,
+    /// Set only for a fresh Translate-mode dictation where the spoken language
+    /// already matched the target (e.g. English speech with target = English).
+    /// The translate step is skipped (the native words are kept) and the UI +
+    /// pill flash a "still on Translate" warning. Always false for stored rows.
+    pub translate_warning: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

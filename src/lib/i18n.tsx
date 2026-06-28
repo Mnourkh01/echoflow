@@ -61,6 +61,10 @@ const STRINGS = {
   // Record control
   transcribing: { en: "Transcribing", ar: "جارٍ التحويل" },
   no_speech_notice: { en: "No speech detected, discarded", ar: "لم يُكتشف كلام، تم التجاهل" },
+  translate_warning_notice: {
+    en: "Still on Translate. You spoke the target language, so your words are kept as is.",
+    ar: "ما زلت في وضع الترجمة. تحدثت باللغة الهدف، لذا عُرضت كلماتك كما هي.",
+  },
   start_recording: { en: "Start recording", ar: "بدء التسجيل" },
   stop_recording: { en: "Stop recording", ar: "إيقاف التسجيل" },
   talk_hint_pre: { en: "Click or hold", ar: "انقر أو اضغط مطولاً" },

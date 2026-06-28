@@ -1,6 +1,6 @@
 [package]
 name = "voice-app"
-version = "1.2.1"
+version = "1.2.5"
 description = "Offline voice to text for English and Arabic"
 edition = "2021"
 rust-version = "1.77"

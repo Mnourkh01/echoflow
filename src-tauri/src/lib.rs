@@ -168,11 +168,17 @@ pub fn run() {
                 _ => {}
             }
         })
-        // Pill right-click menu (ids set in commands::show_pill_menu).
+        // Pill right-click menu (ids set in commands::show_pill_menu). The
+        // pill_mode_* items switch output mode and reuse the same apply path as
+        // the tray, so the header switcher and tray ticks stay in sync.
         .on_menu_event(|app, event| match event.id.as_ref() {
             "pill_open" => show_main(app),
             "pill_max" => maximize_main(app),
             "pill_quit" => app.exit(0),
+            "pill_mode_raw" => apply_output_mode(app, "raw"),
+            "pill_mode_polish" => apply_output_mode(app, "polish"),
+            "pill_mode_prompt" => apply_output_mode(app, "prompt"),
+            "pill_mode_translate" => apply_output_mode(app, "translate"),
             _ => {}
         })
         .setup(|app| {

@@ -114,6 +114,9 @@ export default function App() {
         setCurrent(res);
         setActiveId(res.id);
         await refreshHistory();
+        if (res.translate_warning) {
+          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+        }
       } else {
         // Silent mis-click: discarded by the backend.
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
@@ -191,6 +194,9 @@ export default function App() {
       refreshHistory();
       setRecState("idle");
       setLevel(0);
+      if (e.payload.translate_warning) {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+      }
     });
     const offError = listen<string>("rec-error", (e) => {
       setError(e.payload);
