@@ -44,7 +44,8 @@ $manifest = [ordered]@{
   pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
   platforms = [ordered]@{ "windows-x86_64" = [ordered]@{ signature = $sigText; url = $url } }
 }
-($manifest | ConvertTo-Json -Depth 6) | Set-Content "$root\latest.json" -Encoding utf8
+# Write UTF-8 WITHOUT BOM: serde_json (Tauri updater) rejects a leading BOM.
+[System.IO.File]::WriteAllText("$root\latest.json", ($manifest | ConvertTo-Json -Depth 6), (New-Object System.Text.UTF8Encoding $false))
 
 # 5. Publish the release (installer + manifest). Endpoint points at /latest/download/latest.json.
 gh release create "v$Version" $setup.FullName "$root\latest.json" --repo $Repo --title "EchoFlow v$Version" --notes $Notes
