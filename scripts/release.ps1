@@ -22,9 +22,18 @@ $root = Split-Path -Parent $PSScriptRoot
 $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$root\.keys\echoflow_updater.key" -Raw).Trim()
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content "$root\.keys\echoflow_updater.password.txt" -Raw).Trim()
 
-# 2. Build toolchain env + signed release bundle.
-$env:Path = "C:\Users\mnour\.cargo\bin;" + $env:Path
-$env:LIBCLANG_PATH = "C:\Users\mnour\AppData\Roaming\Python\Python314\site-packages\clang\native"
+# 2. Build toolchain env + signed release bundle. Machine-specific native-build
+#    paths (see the windows-native-build notes): portable CMake + libclang from
+#    .tools, with the pip-wheel libclang as a fallback if .tools was wiped. The
+#    CMAKE_GENERATOR pin is required — the cmake crate otherwise auto-picks
+#    "Visual Studio 18 2026", which portable CMake 3.30.5 doesn't know and aborts.
+$cmakeBin = "$root\.tools\cmake-3.30.5-windows-x86_64\bin"
+$env:Path = "C:\Users\mnour\.cargo\bin;$cmakeBin;" + $env:Path
+$libclangTools = "$root\.tools\libclang"
+$libclangPip = "C:\Users\mnour\AppData\Roaming\Python\Python314\site-packages\clang\native"
+$env:LIBCLANG_PATH = if (Test-Path "$libclangTools\libclang.dll") { $libclangTools } else { $libclangPip }
+$env:CMAKE_GENERATOR = "Visual Studio 16 2019"
+$env:CMAKE_GENERATOR_PLATFORM = "x64"
 Set-Location $root
 npm run tauri build
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
