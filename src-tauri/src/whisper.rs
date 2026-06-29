@@ -241,11 +241,14 @@ impl WhisperEngine {
 }
 
 /// Above this many seconds a dictation is decoded in silence-aligned windows
-/// instead of a single call, so a very long decode is bounded (and later
-/// streamable / cancellable). Below it, the simple single-pass path runs and the
-/// output is identical to before. whisper.cpp already windows internally at 30 s,
-/// so this only governs *our* window granularity, never correctness.
-const LONG_AUDIO_SECS: f32 = 120.0;
+/// instead of a single call. Set HIGH on purpose: whisper.cpp already windows
+/// internally at 30 s with a shared state, so single-pass is both correct AND
+/// faster (our chunking re-creates state per window, ~1.6x slower). Chunking's
+/// real payoff is the per-window seam for streaming / cancel, which isn't wired
+/// yet — so we only engage it for genuinely extreme clips (>10 min), where
+/// keeping the decode bounded and interruptible beats raw speed. Lower this when
+/// streaming partials are built. Below it, the simple fast path runs unchanged.
+const LONG_AUDIO_SECS: f32 = 600.0;
 const CHUNK_TARGET_SECS: f32 = 28.0; // aim per window (≈ whisper's own 30 s window)
 const CHUNK_MAX_SECS: f32 = 40.0; // hard cap before forcing a cut
 const SPLIT_SEARCH_SECS: f32 = 6.0; // hunt this far back from the cap for a quiet spot
