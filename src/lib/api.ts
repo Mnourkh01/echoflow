@@ -22,6 +22,9 @@ export interface RecordingResult {
   // True when a fresh Translate-mode dictation was spoken in the target language
   // already (nothing to translate). The native words are kept and the UI warns.
   translate_warning?: boolean;
+  // True when an AI enhance step (clean/translate/prompt) failed (usually offline)
+  // and the app fell back to the raw transcript.
+  enhance_failed?: boolean;
 }
 
 export interface RecordingSummary {
@@ -47,6 +50,7 @@ export interface Settings {
   model: string;
   language_mode: string; // "auto" | "en" | "ar" | European codes (fr, de, es, it, pt, nl)
   dialect: string; // "auto" | egyptian | levantine | gulf | iraqi | maghrebi
+  custom_vocab: string; // names/jargon/brands to bias the decoder toward
   ptt_hotkey: string;
   toggle_hotkey: string; // global shortcut to flip main window <-> floating pill
   capture_mode: "hold" | "toggle";
@@ -54,10 +58,14 @@ export interface Settings {
   auto_copy: boolean;
   keep_line_breaks: boolean;
   sound: boolean;
+  sound_pack: string; // chime set: soft | marimba | glass | pop | chime
+  sound_volume: number; // 0..100
+  accent: string; // accent palette key: iris | teal | amber | rose | emerald | sky
   noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;
   restore_diacritics: boolean;
+  voice_commands: boolean; // raw mode: spoken "new line"/"period"/... -> real punctuation
   ai_engine: "cli" | "api";
   cli_command: string;
   api_provider: "anthropic" | "openai" | "custom";

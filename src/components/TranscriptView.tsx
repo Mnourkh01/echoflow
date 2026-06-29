@@ -49,8 +49,8 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-ink-800 px-5 py-3">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-800 px-2.5 py-1 text-xs text-ink-400">
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] px-5 py-3">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-xs text-ink-300">
           <Languages className="h-3.5 w-3.5" />
           {langName(rec.language)}
           {rec.language_confidence > 0 && (
@@ -59,11 +59,11 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
             </span>
           )}
         </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-800 px-2.5 py-1 text-xs text-ink-400">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-xs text-ink-300">
           <Clock className="h-3.5 w-3.5" />
           {fmtDuration(rec.duration_ms)}
         </span>
-        <span className="rounded-full bg-ink-800 px-2.5 py-1 text-xs text-ink-500">
+        <span className="rounded-full border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-xs text-ink-500">
           {rec.model}
         </span>
 
@@ -101,7 +101,7 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5">
         {showSegments ? (
           <div className="space-y-3">
             {rec.segments.map((s, i) => (
@@ -123,7 +123,7 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
         )}
       </div>
 
-      <div className="flex items-center gap-3 border-t border-ink-800 px-5 py-3">
+      <div className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3">
         <audio
           controls
           src={convertFileSrc(rec.audio_path)}
@@ -131,7 +131,7 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
         />
         <button
           onClick={() => setShowSegments((v) => !v)}
-          className="rounded-md px-3 py-1.5 text-xs text-ink-400 hover:bg-ink-800 hover:text-white"
+          className="rounded-lg px-3 py-1.5 text-xs text-ink-400 hover:bg-white/[0.06] hover:text-white"
         >
           {showSegments ? t("plain_text") : t("timestamps")}
         </button>

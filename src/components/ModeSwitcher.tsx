@@ -21,8 +21,8 @@ export default function ModeSwitcher({ value, onChange }: Props) {
   const Icon = active.icon;
 
   return (
-    <label className="relative flex items-center gap-2 rounded-lg bg-ink-800 px-2.5 py-1.5 text-xs text-ink-300 hover:text-white">
-      <Icon className="h-3.5 w-3.5 text-accent" />
+    <label className="relative flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-1.5 text-xs text-ink-300 transition hover:border-white/10 hover:text-white">
+      <Icon className="h-3.5 w-3.5 text-aurora-teal" />
       <span className="hidden sm:inline">{t(active.key)}</span>
       <select
         value={value}

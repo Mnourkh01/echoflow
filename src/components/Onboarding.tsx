@@ -39,8 +39,8 @@ export default function Onboarding({ onClose }: Props) {
   const last = i === STEPS.length - 1;
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/70 p-6">
-      <div className="relative w-full max-w-md rounded-2xl border border-ink-800 bg-ink-900 p-7 shadow-2xl">
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/70 p-6 backdrop-blur-sm">
+      <div className="relative w-full max-w-md rounded-2xl border border-white/[0.08] bg-ink-900/85 p-7 shadow-2xl backdrop-blur-2xl">
         <button
           onClick={onClose}
           className="tool-btn absolute end-3 top-3"
@@ -63,7 +63,7 @@ export default function Onboarding({ onClose }: Props) {
                 key={idx}
                 className={[
                   "h-1.5 rounded-full transition-all",
-                  idx === i ? "w-5 bg-accent" : "w-1.5 bg-ink-700",
+                  idx === i ? "w-5 bg-accent" : "w-1.5 bg-white/15",
                 ].join(" ")}
               />
             ))}

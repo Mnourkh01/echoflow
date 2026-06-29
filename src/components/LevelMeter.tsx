@@ -3,7 +3,8 @@ interface Props {
   active: boolean;
 }
 
-// A simple symmetric bar meter. Quiet when idle, reacts to mic input live.
+// A symmetric waveform meter. Quiet when idle, blooms in aurora teal as the live
+// mic level rises — the same "voice = light" signal as the orb, in bar form.
 export default function LevelMeter({ level, active }: Props) {
   const bars = 28;
   const peak = Math.max(0, Math.min(1, level));
@@ -16,19 +17,20 @@ export default function LevelMeter({ level, active }: Props) {
         const threshold = i / bars;
         const lit = active && peak * envelope > threshold * 0.5;
         const height = lit ? 8 + peak * envelope * 28 : 4;
-        // When recording but quiet, bars breathe so the meter never looks frozen.
-        // Stagger each bar's phase so it ripples rather than pulsing in unison.
+        // When recording but quiet, bars ripple so the meter never looks frozen.
         const breathe = active && !lit;
         return (
           <span
             key={i}
-            className={`${lit ? "bg-accent" : breathe ? "bg-accent/40" : "bg-ink-700"}${breathe ? " echo-breathe" : ""}`}
+            className={`${lit ? "bg-aurora-teal" : breathe ? "bg-aurora-iris/40" : "bg-white/10"}${
+              breathe ? " echo-breathe" : ""
+            }`}
             style={{
               width: 3,
               height,
               borderRadius: 999,
               transition: "height 80ms linear",
-              boxShadow: lit ? "0 0 8px rgba(61,123,247,0.7)" : undefined,
+              boxShadow: lit ? "0 0 9px rgb(var(--aurora-teal) / 0.75)" : undefined,
               animationDelay: breathe ? `${(i % 7) * 0.12}s` : undefined,
             }}
           />

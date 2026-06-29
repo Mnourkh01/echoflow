@@ -21,6 +21,11 @@ pub struct RecordingResult {
     /// The translate step is skipped (the native words are kept) and the UI +
     /// pill flash a "still on Translate" warning. Always false for stored rows.
     pub translate_warning: bool,
+    /// True when an AI enhance step (clean / translate / prompt) was requested
+    /// but failed — almost always a lost connection — so we fell back to the raw
+    /// transcript. Lets the UI tell the user their words are raw, not enhanced.
+    /// Always false for stored rows.
+    pub enhance_failed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,17 +45,22 @@ pub struct Settings {
     pub model: String,
     pub language_mode: String, // "auto" | "en" | "ar"
     pub dialect: String,       // Arabic dialect prime: "auto" | egyptian | levantine | gulf | iraqi | maghrebi
+    pub custom_vocab: String,  // user's names/jargon/brands to bias the decoder toward (comma/newline separated)
     pub ptt_hotkey: String,
     pub toggle_hotkey: String, // global shortcut to flip the main window <-> floating pill
     pub capture_mode: String,  // "hold" (push to talk) | "toggle"
     pub auto_type: bool,      // type result into the focused app
     pub auto_copy: bool,      // leave the result on the clipboard so it can be pasted anywhere
     pub keep_line_breaks: bool, // keep newlines when typing (off = one line, never presses Enter)
-    pub sound: bool,          // soft start/stop chime
+    pub sound: bool,          // soft start/stop chime on/off
+    pub sound_pack: String,   // which chime set: "soft" | "marimba" | "glass" | "pop" | "chime"
+    pub sound_volume: i64,    // chime loudness 0..100
+    pub accent: String,       // accent palette key: "iris" | "teal" | "amber" | "rose" | "emerald" | "sky"
     pub noise_suppression: bool, // RNNoise denoise on the mic before transcription
     pub output_mode: String,  // "raw" | "translate" | "polish" | "prompt"
     pub translate_target: String, // language name to translate INTO (e.g. "English")
     pub restore_diacritics: bool, // put accents back on English loanwords (café, résumé)
+    pub voice_commands: bool,  // raw mode: spoken "new line"/"period"/... become real punctuation
     pub ai_engine: String,    // "cli" (default) | "api"
     pub cli_command: String,  // CLI used when ai_engine == "cli" (e.g. "claude")
     pub api_provider: String, // "anthropic" | "openai" | "custom"
@@ -71,6 +81,7 @@ impl Default for Settings {
             model: "small".to_string(),
             language_mode: "auto".to_string(),
             dialect: "auto".to_string(),
+            custom_vocab: String::new(),
             ptt_hotkey: "CommandOrControl+Shift+Space".to_string(),
             toggle_hotkey: "CommandOrControl+Shift+E".to_string(),
             capture_mode: "toggle".to_string(),
@@ -78,10 +89,16 @@ impl Default for Settings {
             auto_copy: true,
             keep_line_breaks: false,
             sound: true,
-            noise_suppression: true,
+            sound_pack: "soft".to_string(),
+            sound_volume: 70,
+            accent: "iris".to_string(),
+            // Default OFF: a real VAD now trims silence, and raw mic into Whisper
+            // is cleaner for most rooms. Still a toggle for noisy environments.
+            noise_suppression: false,
             output_mode: "raw".to_string(),
             translate_target: "English".to_string(),
             restore_diacritics: true,
+            voice_commands: false,
             ai_engine: "cli".to_string(),
             cli_command: "claude".to_string(),
             api_provider: "anthropic".to_string(),

@@ -50,15 +50,15 @@ export default function FirstRunModel({ onReady }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-30 grid place-items-center bg-black/60 p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-ink-800 bg-ink-900 p-6 text-center shadow-2xl">
+    <div className="fixed inset-0 z-30 grid place-items-center bg-black/60 p-6 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-ink-900/85 p-6 text-center shadow-2xl backdrop-blur-2xl">
         <Download className="mx-auto h-8 w-8 text-accent" />
         <h2 className="mt-3 text-lg font-semibold">{t("first_run_title")}</h2>
         <p className="mt-1 text-sm text-ink-400">{t("first_run_desc")}</p>
         {err && <p className="mt-2 text-xs text-amber-400">{err}</p>}
         {downloading ? (
           <div className="mt-4">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-ink-800">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
               <div
                 className="h-full rounded-full bg-accent transition-[width]"
                 style={{ width: `${pct}%` }}

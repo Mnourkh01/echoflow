@@ -134,6 +134,7 @@ impl Db {
                     pinned: row.get::<_, i64>(8)? != 0,
                     segments: Vec::new(),
                     translate_warning: false,
+                    enhance_failed: false,
                 })
             },
         ).map_err(|e| anyhow!("recording {id} not found: {e}"))?;

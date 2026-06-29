@@ -29,10 +29,10 @@ export default function LanguageSwitcher({ value, onChange }: Props) {
 
   return (
     <label
-      className="relative flex items-center gap-2 rounded-lg bg-ink-900 px-2.5 py-1.5 text-xs text-ink-300 hover:text-white"
+      className="relative flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-1.5 text-xs text-ink-300 transition hover:border-white/10 hover:text-white"
       title={t("language")}
     >
-      <Globe className="h-3.5 w-3.5 text-accent" />
+      <Globe className="h-3.5 w-3.5 text-aurora-teal" />
       <span>{label}</span>
       <select
         value={value}

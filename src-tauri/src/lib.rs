@@ -3,11 +3,16 @@ mod commands;
 mod db;
 mod enhance;
 mod export;
+mod mem;
 mod models;
 mod paths;
 mod state;
 mod text;
+mod vad;
 mod whisper;
+
+#[cfg(test)]
+mod loadtest;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -132,12 +137,13 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let (mode, recording, ptt_key, toggle_key) = {
+                    let (mode, recording, busy, ptt_key, toggle_key) = {
                         let state = app.state::<AppState>();
                         let s = state.settings.read();
                         (
                             s.capture_mode.clone(),
                             state.is_recording(),
+                            state.is_busy(),
                             s.ptt_hotkey.clone(),
                             s.toggle_hotkey.clone(),
                         )
@@ -163,12 +169,22 @@ pub fn run() {
                         match event.state() {
                             ShortcutState::Pressed => {
                                 if mode == "toggle" {
+                                    // Debounce an accidental double-tap so the second
+                                    // press can't immediately restart after a stop.
+                                    if !app
+                                        .state::<AppState>()
+                                        .toggle_allowed(std::time::Duration::from_millis(350))
+                                    {
+                                        return;
+                                    }
                                     if recording {
                                         stop_and_notify(app);
-                                    } else {
+                                    } else if !busy {
                                         start_and_notify(app);
                                     }
-                                } else if !recording {
+                                    // busy (still transcribing): ignore the press —
+                                    // there is nothing to start or stop yet.
+                                } else if !recording && !busy {
                                     // hold / push-to-talk: press starts
                                     start_and_notify(app);
                                 }
@@ -255,6 +271,15 @@ pub fn run() {
                     let _ = overlay
                         .set_position(tauri::LogicalPosition::new((sw - 150.0) / 2.0, sh - 96.0));
                 }
+            }
+
+            // Real Windows 11 material (Mica) behind the glass UI. The webview
+            // body is slightly translucent (index.css) so this living backdrop
+            // shows through. Best-effort: a no-op on OS versions without it.
+            #[cfg(target_os = "windows")]
+            if let Some(main) = app.get_webview_window("main") {
+                use tauri::window::{Effect, EffectsBuilder};
+                let _ = main.set_effects(EffectsBuilder::new().effect(Effect::Mica).build());
             }
 
             // Tray icon: the app keeps living here when minimized to the pill,

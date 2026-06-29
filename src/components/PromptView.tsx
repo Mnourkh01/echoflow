@@ -31,7 +31,7 @@ export default function PromptView({ prompt, onDelete }: Props) {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-ink-800 px-5 py-3">
+      <div className="flex items-center gap-2 border-b border-white/[0.06] px-5 py-3">
         <h2 className="flex-1 truncate text-sm font-medium text-ink-200" dir="auto">
           {prompt.title}
         </h2>
@@ -42,7 +42,7 @@ export default function PromptView({ prompt, onDelete }: Props) {
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-5">
         <p dir="auto" className="selectable whitespace-pre-wrap text-base leading-relaxed text-ink-100">
           {prompt.text}
         </p>

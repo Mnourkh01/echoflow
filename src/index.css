@@ -4,6 +4,15 @@
 
 :root {
   color-scheme: dark;
+  /* Accent palette (default "iris"). lib/theme.ts overrides these at runtime so
+     the whole aurora signal recolors live. Triplets are "R G B" for rgb(... / a). */
+  --aurora-teal: 46 230 198;
+  --aurora-iris: 123 107 248;
+  --aurora-violet: 168 85 247;
+  --accent: 123 107 248;
+  --accent-soft: 154 140 255;
+  --accent-deep: 168 85 247;
+  --accent-cyan: 46 230 198;
 }
 
 html,
@@ -11,11 +20,24 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* Desktop shell: the window itself must never scroll or rubber-band. Only the
+     designated inner panes (history list, transcript body) scroll. Without this,
+     wheeling over the orb / empty main area bounces the whole view up and down. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
-  background: #0c0d10;
-  color: #e7e9ee;
+  /* Dark-luminous shell: a deep slate base washed with two faint aurora lights
+     (teal top-left, violet top-right) so glass panels have real depth to float
+     over. Fixed so it doesn't scroll with content. */
+  background:
+    radial-gradient(120% 80% at 12% -10%, rgb(var(--aurora-teal) / 0.10), transparent 52%),
+    radial-gradient(120% 90% at 100% 0%, rgb(var(--aurora-violet) / 0.13), transparent 55%),
+    radial-gradient(90% 70% at 50% 120%, rgb(var(--aurora-iris) / 0.10), transparent 60%),
+    rgba(8, 10, 15, 0.86);
+  background-attachment: fixed;
+  color: #e8ebf1;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -36,11 +58,23 @@ html.overlay #root {
 }
 
 @layer components {
+  /* Liquid-glass panel: translucent fill + blur + a hairline top-light edge.
+     The single most-reused surface; everything elevated is built from it. */
+  .glass {
+    @apply rounded-2xl border border-white/[0.08] bg-white/[0.045] shadow-glass backdrop-blur-xl;
+  }
+  .glass-soft {
+    @apply rounded-xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-md;
+  }
   .tool-btn {
-    @apply grid h-8 w-8 place-items-center rounded-md text-ink-400 transition hover:bg-ink-800 hover:text-white;
+    @apply grid h-9 w-9 place-items-center rounded-xl border border-transparent text-ink-400 transition hover:border-white/10 hover:bg-white/[0.06] hover:text-white;
   }
   .field {
-    @apply w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-ink-100 outline-none focus:border-accent;
+    @apply w-full rounded-xl border border-white/10 bg-ink-950/60 px-3 py-2 text-sm text-ink-100 outline-none backdrop-blur-sm transition focus:border-accent/70 focus:bg-ink-950/80;
+  }
+  /* Aurora-filled pill/button for the one primary action per surface. */
+  .btn-aurora {
+    @apply rounded-xl bg-gradient-to-br from-aurora-teal/90 via-accent to-accent-deep text-white shadow-orb transition hover:brightness-110;
   }
 }
 
@@ -50,36 +84,51 @@ html.overlay #root {
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #2a2e38;
+  background: rgb(var(--accent) / 0.22);
   border-radius: 999px;
-  border: 2px solid #14161b;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #3a404d;
+  background: rgb(var(--accent) / 0.4);
+  background-clip: padding-box;
 }
 
-/* "Listening" life: glow + sonar rings on the record control and pill, plus a
-   gentle shimmer on the quiet waveform so it never looks dead. Brand gradient
-   (blue -> purple) gives the "talking to AI" vibe. */
+/* "Listening" life: aurora glow + sonar rings on the voice orb and pill, plus a
+   gentle ripple on the quiet waveform so it never looks dead. Aurora gradient
+   (teal -> iris -> violet) is the brand's expressive signal. */
 @keyframes echo-glow {
   0%, 100% {
-    box-shadow: 0 0 0 6px rgba(61, 123, 247, 0.16), 0 0 22px 4px rgba(61, 123, 247, 0.4);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+      0 0 0 6px rgb(var(--aurora-teal) / 0.14),
+      0 0 30px 6px rgb(var(--aurora-teal) / 0.4);
   }
   50% {
-    box-shadow: 0 0 0 12px rgba(91, 50, 241, 0.12), 0 0 44px 12px rgba(91, 50, 241, 0.55);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.22),
+      0 0 0 14px rgb(var(--aurora-violet) / 0.12),
+      0 0 54px 16px rgb(var(--aurora-violet) / 0.5);
   }
 }
 @keyframes echo-ring {
-  0% { transform: scale(1); opacity: 0.5; }
-  100% { transform: scale(2.2); opacity: 0; }
+  0% { transform: scale(1); opacity: 0.55; }
+  100% { transform: scale(2.3); opacity: 0; }
 }
 @keyframes echo-breathe {
-  0%, 100% { opacity: 0.3; transform: scaleY(0.7); }
-  50% { opacity: 0.7; transform: scaleY(1.15); }
+  0%, 100% { opacity: 0.35; transform: scaleY(0.7); }
+  50% { opacity: 0.8; transform: scaleY(1.15); }
+}
+/* Slow ambient hue drift behind the idle orb — subtle "alive" atmosphere. */
+@keyframes aurora-drift {
+  0% { transform: translate3d(-6%, -4%, 0) scale(1.05); opacity: 0.7; }
+  50% { transform: translate3d(6%, 4%, 0) scale(1.15); opacity: 0.95; }
+  100% { transform: translate3d(-6%, -4%, 0) scale(1.05); opacity: 0.7; }
 }
 .echo-glow { animation: echo-glow 1.8s ease-in-out infinite; }
 .echo-ring { animation: echo-ring 1.8s ease-out infinite; }
 .echo-breathe { animation: echo-breathe 1.6s ease-in-out infinite; }
+.aurora-drift { animation: aurora-drift 9s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   * {

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { X, Trash2, AlertTriangle, RefreshCw } from "lucide-react";
+import { X, Trash2, AlertTriangle, RefreshCw, Volume2 } from "lucide-react";
 import type { ApiUsage, DownloadEnd, DownloadProgress, ModelInfo, OutputMode, Settings } from "../lib/api";
 import { api } from "../lib/api";
 import { checkForUpdate, installUpdate } from "../lib/updater";
 import { translate, type Lang, type StringKey } from "../lib/i18n";
+import { previewSound, SOUND_PACKS } from "../lib/sound";
+import { PALETTES, applyAccent } from "../lib/theme";
 
 // Model order + approximate download sizes (MB) shown before a model is present.
 const KNOWN_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"] as const;
@@ -42,6 +44,27 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "Japanese", label: "日本語" },
   { value: "Korean", label: "한국어" },
 ];
+
+// API engine model picker, per provider. First entry is the default — the fast,
+// cheap model, which is the right pick for the light text cleanup the enhance
+// step does. "custom" has no list: those endpoints use their own model ids, so
+// the user types it. New models get added here on release; nothing else changes.
+const API_MODELS: Record<string, { value: string; label: string }[]> = {
+  anthropic: [
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 — fast, cheap" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 — balanced" },
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8 — best quality" },
+  ],
+  openai: [
+    { value: "gpt-4o-mini", label: "GPT-4o mini — fast, cheap" },
+    { value: "gpt-4o", label: "GPT-4o — balanced" },
+  ],
+};
+const DEFAULT_API_MODEL: Record<string, string> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  custom: "",
+};
 
 // Recognition languages (what Whisper transcribes). "auto" is added in the UI.
 // Value is the Whisper code; label is the native name. European entries carry
@@ -264,21 +287,32 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
 
   async function save() {
     if (!settings) return;
-    const ok = await api.updateSettings(settings);
+    // Auto-fill the provider's default model if the API engine is on and none is
+    // set, so "didn't choose a model" never becomes an empty-model error.
+    let toSave = settings;
+    if (
+      toSave.ai_engine === "api" &&
+      toSave.api_provider !== "custom" &&
+      !toSave.api_model
+    ) {
+      toSave = { ...toSave, api_model: DEFAULT_API_MODEL[toSave.api_provider] };
+      setSettings(toSave);
+    }
+    const ok = await api.updateSettings(toSave);
     if (!ok) {
       setWarn(t("hotkey_warn"));
       return;
     }
-    onSaved(settings);
+    onSaved(toSave);
     onClose();
   }
 
   return (
     <div
       dir={lang === "ar" ? "rtl" : "ltr"}
-      className="fixed inset-0 z-20 grid place-items-center bg-black/50 p-6"
+      className="fixed inset-0 z-20 grid place-items-center bg-black/50 p-6 backdrop-blur-sm"
     >
-      <div className="flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col rounded-2xl border border-ink-800 bg-ink-900 shadow-2xl">
+      <div className="flex max-h-[calc(100vh-3rem)] w-full max-w-md flex-col rounded-2xl border border-white/[0.08] bg-ink-900/85 shadow-2xl backdrop-blur-2xl">
         <div className="flex shrink-0 items-center justify-between p-6 pb-4">
           <h2 className="text-lg font-semibold">{t("settings")}</h2>
           <button onClick={onClose} className="tool-btn">
@@ -297,7 +331,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     "flex-1 rounded-lg px-3 py-2 text-sm transition",
                     settings.ui_lang === m
                       ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
                   {m === "en" ? "English" : "العربية"}
@@ -323,7 +357,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.output_mode === m
                       ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
                   {t(label)}
@@ -370,7 +404,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       "flex-1 rounded-lg px-3 py-2 text-sm transition",
                       settings.ai_engine === m
                         ? "bg-accent text-white"
-                        : "bg-ink-800 text-ink-400 hover:text-white",
+                        : "bg-white/[0.05] text-ink-400 hover:text-white",
                     ].join(" ")}
                   >
                     {m === "cli" ? t("engine_cli") : t("engine_api")}
@@ -392,9 +426,16 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                 <div className="mt-2 space-y-2">
                   <select
                     value={settings.api_provider}
-                    onChange={(e) =>
-                      patch({ api_provider: e.target.value as Settings["api_provider"] })
-                    }
+                    onChange={(e) => {
+                      const p = e.target.value as Settings["api_provider"];
+                      // Auto-pick the provider's default model so the user never
+                      // has to. Custom keeps whatever model id they typed.
+                      patch(
+                        p === "custom"
+                          ? { api_provider: p }
+                          : { api_provider: p, api_model: DEFAULT_API_MODEL[p] }
+                      );
+                    }}
                     className="field"
                   >
                     <option value="anthropic">Anthropic (Claude)</option>
@@ -411,20 +452,32 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     autoComplete="off"
                     className="field"
                   />
-                  <input
-                    value={settings.api_model}
-                    onChange={(e) => patch({ api_model: e.target.value })}
-                    placeholder={
-                      settings.api_provider === "anthropic"
-                        ? "claude-sonnet-4-5"
-                        : settings.api_provider === "openai"
-                          ? "gpt-4o-mini"
-                          : "model-id"
-                    }
-                    spellCheck={false}
-                    dir="ltr"
-                    className="field"
-                  />
+                  {settings.api_provider === "custom" ? (
+                    <input
+                      value={settings.api_model}
+                      onChange={(e) => patch({ api_model: e.target.value })}
+                      placeholder="model-id"
+                      spellCheck={false}
+                      dir="ltr"
+                      className="field"
+                    />
+                  ) : (
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-ink-500">{t("api_model")}</span>
+                      <select
+                        value={settings.api_model || DEFAULT_API_MODEL[settings.api_provider]}
+                        onChange={(e) => patch({ api_model: e.target.value })}
+                        className="field"
+                        dir="ltr"
+                      >
+                        {(API_MODELS[settings.api_provider] ?? []).map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {settings.api_provider === "custom" && (
                     <input
                       value={settings.api_base_url}
@@ -437,7 +490,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   )}
                   <p className="text-xs text-ink-500">{t("api_key_hint")}</p>
                   {usage && (
-                    <div className="flex items-center justify-between rounded-lg bg-ink-800/60 px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.04] px-3 py-2 text-xs">
                       <span className="text-ink-300">
                         {t("usage")}:{" "}
                         <span className="tabular-nums text-ink-100">
@@ -477,7 +530,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               </select>
               <button
                 onClick={() => api.listInputDevices().then(setDevices).catch(() => {})}
-                className="shrink-0 rounded-lg bg-ink-800 px-3 text-xs text-ink-300 hover:text-white"
+                className="shrink-0 rounded-lg border border-white/[0.06] bg-white/[0.05] px-3 text-xs text-ink-300 hover:text-white"
                 title={t("refresh")}
               >
                 {t("refresh")}
@@ -488,12 +541,12 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                 onClick={testing ? stopMicTest : startMicTest}
                 className={[
                   "rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                  testing ? "bg-accent text-white" : "bg-ink-800 text-ink-200 hover:text-white",
+                  testing ? "bg-accent text-white" : "bg-white/[0.05] text-ink-200 hover:text-white",
                 ].join(" ")}
               >
                 {testing ? t("stop_test") : t("test_mic")}
               </button>
-              <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-800">
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
                 <div
                   className="h-full rounded-full bg-accent transition-[width] duration-75"
                   style={{ width: `${Math.min(100, Math.round(testLevel * 140))}%` }}
@@ -514,7 +567,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                 return (
                   <div
                     key={m}
-                    className="flex items-center gap-2 rounded-lg bg-ink-800/60 px-3 py-2"
+                    className="flex items-center gap-2 rounded-xl border border-white/[0.05] bg-white/[0.04] px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -527,7 +580,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       </div>
                       <span className="text-xs text-ink-500">{fmtSize(sizeMb)}</span>
                       {prog && (
-                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-ink-700">
+                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                           <div
                             className="h-full bg-accent transition-all"
                             style={{ width: `${pct(prog)}%` }}
@@ -545,7 +598,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                           {!active && (
                             <button
                               onClick={() => patch({ model: m })}
-                              className="rounded-md bg-ink-700 px-2.5 py-1 text-xs text-ink-200 hover:text-white"
+                              className="rounded-lg border border-white/[0.08] bg-white/[0.06] px-2.5 py-1 text-xs text-ink-200 hover:text-white"
                             >
                               {t("use_model")}
                             </button>
@@ -609,11 +662,30 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             </Field>
           )}
 
+          <Field label={t("custom_vocab")}>
+            <textarea
+              value={settings.custom_vocab}
+              onChange={(e) => patch({ custom_vocab: e.target.value })}
+              placeholder={t("custom_vocab_placeholder")}
+              rows={2}
+              className="field resize-y"
+              dir="auto"
+            />
+            <p className="mt-1.5 text-xs text-ink-500">{t("custom_vocab_hint")}</p>
+          </Field>
+
           <Toggle
             label={t("restore_diacritics")}
             desc={t("restore_diacritics_desc")}
             checked={settings.restore_diacritics}
             onChange={(v) => patch({ restore_diacritics: v })}
+          />
+
+          <Toggle
+            label={t("voice_commands")}
+            desc={t("voice_commands_desc")}
+            checked={settings.voice_commands}
+            onChange={(v) => patch({ voice_commands: v })}
           />
 
           <Field label={t("hotkey_mode")}>
@@ -626,7 +698,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     "flex-1 rounded-lg px-3 py-2 text-sm transition",
                     settings.capture_mode === m
                       ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
                   {m === "hold" ? t("push_to_talk") : t("toggle")}
@@ -687,6 +759,85 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             checked={settings.sound}
             onChange={(v) => patch({ sound: v })}
           />
+          {settings.sound && (
+            <>
+              <Field label={t("sound_style")}>
+                <div className="grid grid-cols-3 gap-2">
+                  {SOUND_PACKS.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => {
+                        patch({ sound_pack: p });
+                        previewSound(p, settings.sound_volume, "start");
+                      }}
+                      className={[
+                        "rounded-lg px-3 py-2 text-sm transition",
+                        settings.sound_pack === p
+                          ? "bg-accent text-white"
+                          : "bg-white/[0.05] text-ink-400 hover:text-white",
+                      ].join(" ")}
+                    >
+                      {t(`sound_pack_${p}` as StringKey)}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label={t("sound_volume")}>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={settings.sound_volume}
+                    onChange={(e) => patch({ sound_volume: Number(e.target.value) })}
+                    onMouseUp={() => previewSound(settings.sound_pack, settings.sound_volume, "start")}
+                    className="h-1.5 flex-1 cursor-pointer accent-accent"
+                  />
+                  <span className="w-9 text-right text-xs tabular-nums text-ink-400">
+                    {settings.sound_volume}%
+                  </span>
+                  <button
+                    onClick={() => previewSound(settings.sound_pack, settings.sound_volume, "start")}
+                    className="tool-btn"
+                    title={t("sound_preview")}
+                  >
+                    <Volume2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </Field>
+            </>
+          )}
+          <Field label={t("accent_color")}>
+            <div className="flex flex-wrap gap-2">
+              {PALETTES.map((p) => {
+                const active = settings.accent === p.key;
+                return (
+                  <button
+                    key={p.key}
+                    onClick={() => {
+                      patch({ accent: p.key });
+                      applyAccent(p.key); // instant live preview
+                    }}
+                    title={t(p.label as StringKey)}
+                    className={[
+                      "flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition",
+                      active
+                        ? "border-white/25 bg-white/[0.08] text-white"
+                        : "border-transparent bg-white/[0.04] text-ink-400 hover:text-white",
+                    ].join(" ")}
+                  >
+                    <span
+                      className="h-3.5 w-3.5 rounded-full ring-1 ring-inset ring-white/25"
+                      style={{ background: p.swatch }}
+                    />
+                    {t(p.label as StringKey)}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-500">{t("accent_color_hint")}</p>
+          </Field>
           <Toggle
             label={t("noise_suppression")}
             desc={t("noise_suppression_desc")}
@@ -705,7 +856,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.retention_days === days
                       ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
                   {t(label)}
@@ -725,7 +876,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.idle_unload_minutes === mins
                       ? "bg-accent text-white"
-                      : "bg-ink-800 text-ink-400 hover:text-white",
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
                   {t(label)}
@@ -763,7 +914,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               ) : (
                 <button
                   onClick={() => setConfirmClear(true)}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-ink-800 px-2.5 py-1 text-xs text-amber-300 hover:bg-ink-700"
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.06] px-2.5 py-1 text-xs text-amber-300 hover:bg-white/[0.1]"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   {t("clear_history")}
@@ -773,7 +924,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
           </Field>
 
           <Field label={t("about")}>
-            <div className="flex items-center justify-between rounded-lg bg-ink-800/60 px-3 py-2 text-xs">
+            <div className="flex items-center justify-between rounded-xl border border-white/[0.05] bg-white/[0.04] px-3 py-2 text-xs">
               <span className="text-ink-300">
                 {t("app_version")}{" "}
                 <span className="tabular-nums text-ink-100">{version || "…"}</span>
@@ -851,7 +1002,7 @@ function Toggle({
         onClick={() => onChange(!checked)}
         className={[
           "mt-0.5 h-6 w-11 shrink-0 rounded-full p-0.5 transition",
-          checked ? "bg-accent" : "bg-ink-700",
+          checked ? "bg-accent" : "bg-white/15",
         ].join(" ")}
       >
         <span

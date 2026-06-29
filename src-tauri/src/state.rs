@@ -1,7 +1,7 @@
 //! Shared application state managed by Tauri.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,11 +20,29 @@ pub struct AppState {
     pub settings: RwLock<Settings>,
     pub level: Arc<AtomicU32>,
     pub recording: Mutex<Option<RecordingHandle>>,
+    /// True while a transcription is running (capture stopped, result not yet
+    /// delivered). Capture's `recording` slot empties the instant we take the
+    /// handle, so without this a second start/stop would slip in and stack
+    /// another job behind the engine lock — the "double-tap posts twice / 10-15s
+    /// freeze" bug. Set via `begin_transcribing`, cleared by the returned guard.
+    transcribing: AtomicBool,
+    /// Last time a toggle-mode hotkey press was acted on, to debounce double-taps.
+    last_toggle: Mutex<Instant>,
     /// Names of models currently downloading, to prevent duplicate downloads.
     pub downloads: Mutex<HashSet<String>>,
     engine: Mutex<Option<WhisperEngine>>,
     /// When the model was last used, so an idle monitor can free its RAM.
     last_activity: Mutex<Instant>,
+}
+
+/// Clears the `transcribing` flag when dropped, so it can never get stuck on
+/// even if transcription panics or returns early.
+pub struct TranscribeGuard<'a>(&'a AtomicBool);
+
+impl Drop for TranscribeGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl AppState {
@@ -35,6 +53,8 @@ impl AppState {
             settings: RwLock::new(settings),
             level: Arc::new(AtomicU32::new(0)),
             recording: Mutex::new(None),
+            transcribing: AtomicBool::new(false),
+            last_toggle: Mutex::new(Instant::now()),
             downloads: Mutex::new(HashSet::new()),
             engine: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
@@ -43,6 +63,30 @@ impl AppState {
 
     pub fn is_recording(&self) -> bool {
         self.recording.lock().is_some()
+    }
+
+    /// True while the last clip is still being transcribed / typed out.
+    pub fn is_busy(&self) -> bool {
+        self.transcribing.load(Ordering::SeqCst)
+    }
+
+    /// Mark transcription as started. The returned guard clears the flag on drop
+    /// (panic-safe), so `is_busy` can never get permanently stuck.
+    pub fn begin_transcribing(&self) -> TranscribeGuard<'_> {
+        self.transcribing.store(true, Ordering::SeqCst);
+        TranscribeGuard(&self.transcribing)
+    }
+
+    /// Debounce toggle-mode hotkey presses: allow one only if the last accepted
+    /// press was at least `min_gap` ago. Swallows the second tap of a double-click
+    /// so it can't start-then-immediately-restart a recording.
+    pub fn toggle_allowed(&self, min_gap: Duration) -> bool {
+        let mut last = self.last_toggle.lock();
+        if last.elapsed() < min_gap {
+            return false;
+        }
+        *last = Instant::now();
+        true
     }
 
     /// Mark the model as just-used, resetting the idle-unload timer.
@@ -97,6 +141,7 @@ impl AppState {
         language_mode: &str,
         translate: bool,
         dialect: &str,
+        vocab: &str,
     ) -> Result<Transcript> {
         self.touch();
         let mut guard = self.engine.lock();
@@ -114,8 +159,11 @@ impl AppState {
         let result = guard
             .as_ref()
             .expect("engine loaded above")
-            .transcribe(audio_16k, language_mode, translate, dialect);
+            .transcribe(audio_16k, language_mode, translate, dialect, vocab);
         self.touch();
+        // Leave a memory trail in the log so a slow leak over hours of heavy use
+        // is visible after the fact (the "becomes unresponsive after ~2h" report).
+        log::info!("transcribe finished; rss = {:.0} MB", crate::mem::rss_mb());
         result
     }
 }

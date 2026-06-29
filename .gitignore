@@ -14,6 +14,8 @@ src-tauri/models/*.bin
 # generated release artifacts
 latest.json
 *.sig
+# browser-automation (MCP) verification artifacts
+.playwright-mcp/
 # os / editor
 .DS_Store
 Thumbs.db

@@ -15,7 +15,8 @@ import Onboarding from "./components/Onboarding";
 import { api, type AppStatus, type OutputMode, type Prompt, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
 import { checkForUpdate, notifyUpdateOnce, type Update } from "./lib/updater";
 import { I18nProvider, translate } from "./lib/i18n";
-import { playStart, playStop } from "./lib/sound";
+import { playStart, playStop, configureSound } from "./lib/sound";
+import { applyAccent } from "./lib/theme";
 
 export default function App() {
   const [recState, setRecState] = useState<RecState>("idle");
@@ -116,6 +117,8 @@ export default function App() {
         await refreshHistory();
         if (res.translate_warning) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+        } else if (res.enhance_failed) {
+          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
         }
       } else {
         // Silent mis-click: discarded by the backend.
@@ -196,6 +199,8 @@ export default function App() {
       setLevel(0);
       if (e.payload.translate_warning) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+      } else if (e.payload.enhance_failed) {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
       }
     });
     const offError = listen<string>("rec-error", (e) => {
@@ -226,6 +231,13 @@ export default function App() {
     document.documentElement.lang = uiLang;
     document.documentElement.dir = uiLang === "ar" ? "rtl" : "ltr";
   }, [uiLang]);
+
+  // Apply the chosen accent palette + sync the sound synth whenever they change.
+  useEffect(() => {
+    if (!settings) return;
+    applyAccent(settings.accent);
+    configureSound({ volume: settings.sound_volume, pack: settings.sound_pack });
+  }, [settings?.accent, settings?.sound_volume, settings?.sound_pack, settings]);
 
   // Quick output-mode change from the header: persist immediately.
   const changeMode = useCallback(async (mode: OutputMode) => {
@@ -333,7 +345,7 @@ export default function App() {
       />
 
       <main className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b border-ink-800 px-5 py-3">
+        <header className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-white/[0.02] px-5 py-3 backdrop-blur-md">
           <div className="flex items-center gap-2 text-xs text-ink-500">
             <Cpu className="h-3.5 w-3.5" />
             <span>{status ? status.backend : translate(uiLang, "starting")}</span>

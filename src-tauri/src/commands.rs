@@ -377,6 +377,11 @@ pub fn begin_recording(state: &AppState, device: Option<String>) -> Result<(), S
     if slot.is_some() {
         return Err("already recording".into());
     }
+    // Don't start a new clip while the previous one is still transcribing — it
+    // would queue behind the engine lock and the two would surface seconds apart.
+    if state.is_busy() {
+        return Err("still transcribing the previous clip".into());
+    }
     let dev = device.or_else(|| state.settings.read().input_device.clone());
     state.level.store(0, Ordering::Relaxed);
     let handle = audio::start(dev, state.level.clone()).map_err(|e| e.to_string())?;
@@ -392,6 +397,10 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         .lock()
         .take()
         .ok_or_else(|| "not recording".to_string())?;
+    // Hold the busy flag for the whole transcribe+type pass so a second press
+    // can't start a new clip or stack another job behind the engine lock. The
+    // guard clears it on every exit path, including the early silent-discard.
+    let _busy = state.begin_transcribing();
     let captured = handle.stop().map_err(|e| e.to_string())?;
     state.level.store(0, Ordering::Relaxed);
 
@@ -416,15 +425,17 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let denoise = state.settings.read().noise_suppression;
     let audio_16k = audio::prepare_for_whisper(&captured, denoise);
 
-    let (model, lang_mode, dialect, auto_type, auto_copy, keep_line_breaks, output_mode, translate_target) = {
+    let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target) = {
         let s = state.settings.read();
         (
             s.model.clone(),
             s.language_mode.clone(),
             s.dialect.clone(),
+            s.custom_vocab.clone(),
             s.auto_type,
             s.auto_copy,
             s.keep_line_breaks,
+            s.voice_commands,
             s.output_mode.clone(),
             s.translate_target.clone(),
         )
@@ -434,7 +445,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // language work (it handles Arabic dialects far better than Whisper's weak
     // built-in translate task), so native text is the right input for it.
     let mut transcript = state
-        .transcribe(&audio_16k, &model, &lang_mode, false, &dialect)
+        .transcribe(&audio_16k, &model, &lang_mode, false, &dialect, &vocab)
         .map_err(|e| e.to_string())?;
     // Language the user actually spoke (detected in auto mode, or the forced code).
     let source_lang = transcript.language.clone();
@@ -445,6 +456,9 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // that, skip the CLI, keep the user's own words, and raise a warning the UI +
     // pill surface so they know they're still on Translate.
     let mut translate_warning = false;
+    // Set when an AI enhance is attempted but fails (offline) and we fall back to
+    // the raw transcript, so the UI can tell the user their text wasn't enhanced.
+    let mut enhance_failed = false;
 
     // translate / polish / prompt run the transcript through the local CLI.
     let cli_system: Option<String> = match output_mode.as_str() {
@@ -466,28 +480,43 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                 Ok(out) => {
                     transcript.full_text = out;
                     transcript.segments.clear(); // enhanced output no longer maps to timings
+                    // Only Translate changes the language. Clean writing / Prompt
+                    // polish the user's words IN THEIR OWN language, so keep the
+                    // spoken language (so RTL + Arabic font render correctly).
                     transcript.language = if output_mode == "translate" {
                         lang_code_for(&translate_target)
                     } else {
-                        "en".to_string()
+                        source_lang.clone()
                     };
                 }
                 Err(e) => {
                     log::warn!("{output_mode} enhance failed: {e}");
+                    enhance_failed = true;
                     // Translate must still yield something useful: fall back to
                     // Whisper's offline English translate task.
                     if output_mode == "translate" {
                         if let Ok(mut t2) =
-                            state.transcribe(&audio_16k, &model, &lang_mode, true, &dialect)
+                            state.transcribe(&audio_16k, &model, &lang_mode, true, &dialect, &vocab)
                         {
                             t2.language = "en".to_string();
                             transcript = t2;
+                            // Offline translate still produced English, so this
+                            // isn't a raw-text fallback the user needs warning about.
+                            enhance_failed = false;
                         }
                     }
                     // polish / prompt: keep the native transcript (user's words).
                 }
             }
         }
+    }
+
+    // Raw mode: honor inline voice commands ("new line", "period", "comma"...) so
+    // the user controls punctuation and line breaks by voice. Other modes leave
+    // formatting to the LLM, so this only runs on the untouched transcript.
+    if output_mode == "raw" && voice_commands {
+        transcript.full_text =
+            crate::text::apply_voice_commands(&transcript.full_text, &transcript.language);
     }
 
     // Restore Latin diacritics on English output (cafe -> café, resume -> résumé,
@@ -521,7 +550,12 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let has = has_words(&transcript.full_text);
     let did_type = inject && auto_type && has;
     if did_type {
-        let typed = if keep_line_breaks {
+        // A spoken "new line" command is an explicit request for a break, so keep
+        // newlines when raw voice commands produced any, even if keep_line_breaks
+        // (which governs incidental newlines) is off.
+        let keep = keep_line_breaks
+            || (output_mode == "raw" && voice_commands && transcript.full_text.contains('\n'));
+        let typed = if keep {
             transcript.full_text.clone()
         } else {
             one_line(&transcript.full_text)
@@ -548,6 +582,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         pinned: false,
         segments: transcript.segments,
         translate_warning,
+        enhance_failed,
     }))
 }
 
@@ -709,6 +744,9 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     }
     // Keep the tray's mode menu in sync with changes made in the UI.
     crate::refresh_tray_menu(&app);
+    // Notify other windows (the floating pill) so live-applied settings like the
+    // accent palette take effect everywhere without a restart.
+    let _ = app.emit("settings-changed", state.settings.read().clone());
     let ok = if ptt != old_ptt || toggle != old_toggle {
         register_shortcuts(&app, &ptt, &toggle)
     } else {
@@ -753,11 +791,18 @@ pub fn reset_usage(state: State<AppState>) -> R<()> {
 pub fn app_status(state: State<AppState>) -> AppStatus {
     let model = state.settings.read().model.clone();
     let model_present = state.paths.model_present(&model);
+    // GPU is a compile-time choice (the `gpu-vulkan` feature). Report what this
+    // build actually uses so the UI status line is honest.
+    let gpu = cfg!(feature = "gpu-vulkan");
     AppStatus {
         model,
         model_present,
-        gpu: false,
-        backend: "whisper.cpp (CPU)".to_string(),
+        gpu,
+        backend: if gpu {
+            "whisper.cpp (Vulkan GPU)".to_string()
+        } else {
+            "whisper.cpp (CPU)".to_string()
+        },
     }
 }
 

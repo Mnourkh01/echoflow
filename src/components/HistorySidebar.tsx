@@ -44,21 +44,21 @@ export default function HistorySidebar({
     bucket === "today" ? t("today") : bucket === "yesterday" ? t("yesterday") : bucket;
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-r border-ink-800 bg-ink-950">
+    <aside className="flex w-72 shrink-0 flex-col border-r border-white/[0.06] bg-ink-950/40 backdrop-blur-xl">
       <div className="flex items-center gap-2 px-4 py-4">
         <img src={logo} alt="" className="h-6 w-6" />
         <span className="font-semibold tracking-tight">{t("app_title")}</span>
       </div>
 
       {/* History / Prompts tabs */}
-      <div className="mx-3 mb-2 flex rounded-lg bg-ink-900 p-0.5 text-sm">
+      <div className="mx-3 mb-2 flex rounded-xl border border-white/[0.06] bg-white/[0.03] p-0.5 text-sm">
         {(["history", "prompts"] as const).map((m) => (
           <button
             key={m}
             onClick={() => onTab(m)}
             className={[
-              "flex-1 rounded-md px-3 py-1.5 transition",
-              tab === m ? "bg-ink-800 text-white" : "text-ink-400 hover:text-white",
+              "flex-1 rounded-lg px-3 py-1.5 transition",
+              tab === m ? "bg-white/[0.08] text-white shadow-sm" : "text-ink-400 hover:text-white",
             ].join(" ")}
           >
             {m === "history" ? t("tab_history") : t("tab_prompts")}
@@ -69,7 +69,7 @@ export default function HistorySidebar({
       {tab === "history" ? (
         <>
           <div className="px-3 pb-3">
-            <div className="flex items-center gap-2 rounded-lg bg-ink-900 px-3 py-2">
+            <div className="flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.04] px-3 py-2 focus-within:border-accent/50">
               <Search className="h-4 w-4 text-ink-500" />
               <input
                 value={q}
@@ -83,7 +83,7 @@ export default function HistorySidebar({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-2 pb-3">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3">
             {items.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-ink-500">
                 {q.trim() ? t("no_results") : t("nothing_saved")}
@@ -97,7 +97,7 @@ export default function HistorySidebar({
                 return (
                   <div key={it.id}>
                     {showHeader && (
-                      <div className="sticky top-0 z-10 bg-ink-950/95 px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-500 backdrop-blur">
+                      <div className="sticky top-0 z-10 bg-ink-950/55 px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-ink-500 backdrop-blur-md">
                         {headerLabel(bucket)}
                       </div>
                     )}
@@ -105,13 +105,15 @@ export default function HistorySidebar({
                       onClick={() => onSelect(it.id)}
                       className={[
                         "group mb-1 cursor-pointer rounded-lg px-3 py-2.5 transition",
-                        active ? "bg-ink-800" : "hover:bg-ink-900",
+                        active
+                          ? "border border-white/10 bg-white/[0.07]"
+                          : "border border-transparent hover:bg-white/[0.04]",
                       ].join(" ")}
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-ink-500">{fmtTime(it.created_at, locale)}</span>
                         <div className="flex items-center gap-2">
-                          <span className="rounded bg-ink-800 px-1.5 py-0.5 text-[10px] uppercase text-ink-400 group-hover:bg-ink-700">
+                          <span className="rounded-md bg-white/[0.06] px-1.5 py-0.5 text-[10px] uppercase text-ink-300 group-hover:bg-white/[0.1]">
                             {langName(it.language)}
                           </span>
                           <span className="text-[10px] text-ink-500">{fmtDuration(it.duration_ms)}</span>
@@ -154,7 +156,7 @@ export default function HistorySidebar({
           </div>
         </>
       ) : (
-        <div className="flex-1 overflow-y-auto px-2 pb-3 pt-1">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-3 pt-1">
           {prompts.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-ink-500">{t("no_prompts")}</p>
           ) : (

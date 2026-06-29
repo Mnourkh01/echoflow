@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { Languages } from "lucide-react";
-import { api } from "./lib/api";
+import { api, type Settings } from "./lib/api";
+import { applyAccent } from "./lib/theme";
 import logo from "./assets/echoflow.png";
 
 type Mode = "idle" | "recording" | "processing";
@@ -52,6 +53,16 @@ export default function Overlay() {
       offCanceled.then((f) => f());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The pill is its own window/document, so apply the accent palette here too
+  // (and keep it in sync when settings change from the main window / tray).
+  useEffect(() => {
+    api.getSettings().then((s) => applyAccent(s.accent)).catch(() => {});
+    const off = listen<Settings>("settings-changed", (e) => applyAccent(e.payload.accent));
+    return () => {
+      off.then((f) => f());
+    };
   }, []);
 
   // Drive the waveform from the live capture level while recording.
@@ -110,8 +121,8 @@ export default function Overlay() {
         api.showPillMenu().catch(() => {});
       }}
       className={[
-        "flex h-screen w-screen cursor-grab items-center gap-2 rounded-full border bg-ink-900/95 px-2 shadow-2xl transition-colors",
-        warn ? "border-amber-400/70" : "border-white/10",
+        "flex h-screen w-screen cursor-grab items-center gap-2 rounded-full border bg-ink-900/65 px-2 shadow-2xl backdrop-blur-xl transition-colors",
+        warn ? "border-amber-400/70" : "border-white/15",
       ].join(" ")}
     >
       {warn ? (
@@ -137,10 +148,10 @@ export default function Overlay() {
                 className={[
                   "w-[2px] rounded-full transition-[height] duration-100",
                   active
-                    ? "bg-accent"
+                    ? "bg-aurora-teal"
                     : processing
-                      ? "bg-accent/70 animate-pulse"
-                      : "bg-ink-600",
+                      ? "bg-aurora-iris/70 animate-pulse"
+                      : "bg-white/20",
                 ].join(" ")}
                 style={{ height: `${h}%` }}
               />

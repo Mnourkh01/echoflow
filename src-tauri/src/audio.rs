@@ -292,6 +292,10 @@ pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> 
         resample_to_16k(&mono, captured.sample_rate)
     };
     normalize_loudness(&mut out, 0.12, 120.0);
+    // VAD: drop silence so Whisper decodes only speech — faster, and far less
+    // likely to hallucinate words during quiet stretches. Conservative; returns
+    // the clip unchanged if it can't confidently find speech.
+    out = crate::vad::trim_to_speech(&out);
     let min_len = TARGET_RATE as usize;
     if out.len() < min_len {
         out.resize(min_len, 0.0);
