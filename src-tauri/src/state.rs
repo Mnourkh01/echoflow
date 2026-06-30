@@ -33,6 +33,13 @@ pub struct AppState {
     engine: Mutex<Option<WhisperEngine>>,
     /// When the model was last used, so an idle monitor can free its RAM.
     last_activity: Mutex<Instant>,
+    /// The window that had focus the instant recording started (the user's real
+    /// target field). Stored as the raw HWND value so it's `Send`. On stop, we
+    /// restore focus here before typing, so dictation lands where the user began
+    /// even if they tabbed away to a folder / page to reference something while
+    /// talking. `None` means "type wherever focus is now" (capture started from
+    /// our own window, or not on Windows).
+    target_window: Mutex<Option<isize>>,
 }
 
 /// Clears the `transcribing` flag when dropped, so it can never get stuck on
@@ -58,11 +65,23 @@ impl AppState {
             downloads: Mutex::new(HashSet::new()),
             engine: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
+            target_window: Mutex::new(None),
         }
     }
 
     pub fn is_recording(&self) -> bool {
         self.recording.lock().is_some()
+    }
+
+    /// Remember the window that owned focus when recording began (the auto-type
+    /// target). `None` clears it (type wherever focus lands).
+    pub fn set_target_window(&self, hwnd: Option<isize>) {
+        *self.target_window.lock() = hwnd;
+    }
+
+    /// The focus target captured at record start, if any.
+    pub fn target_window(&self) -> Option<isize> {
+        *self.target_window.lock()
     }
 
     /// True while the last clip is still being transcribed / typed out.

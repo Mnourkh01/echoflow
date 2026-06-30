@@ -169,6 +169,14 @@ const STRINGS = {
     en: "The local CLI used for Translate, Clean writing and Prompt mode. Default: claude (your existing subscription, no API key).",
     ar: "الـCLI المحلي المستخدم للترجمة وتحسين الصياغة ووضع البرومبت. الافتراضي: claude (اشتراكك الحالي، بدون مفتاح API).",
   },
+  cli_model: { en: "Model", ar: "النموذج" },
+  cli_model_haiku: { en: "Haiku · fast", ar: "Haiku · سريع" },
+  cli_model_sonnet: { en: "Sonnet 5 · balanced", ar: "Sonnet 5 · متوازن" },
+  cli_model_opus: { en: "Opus · best", ar: "Opus · الأفضل" },
+  cli_model_hint: {
+    en: "Haiku is fast and free on your subscription, ideal for quick cleanups. Step up to Sonnet 5 or Opus for tougher text.",
+    ar: "Haiku سريع ومجاني مع اشتراكك، مثالي للتحسينات السريعة. ارتقِ إلى Sonnet 5 أو Opus للنصوص الأصعب.",
+  },
   ai_engine: { en: "AI engine", ar: "محرك الذكاء الاصطناعي" },
   engine_cli: { en: "Local CLI", ar: "CLI محلي" },
   engine_api: { en: "My API key", ar: "مفتاح API الخاص بي" },
@@ -216,6 +224,17 @@ const STRINGS = {
   auto_copy_desc: {
     en: "After each result, leave the text on your clipboard so you can paste it anywhere with Ctrl+V.",
     ar: "بعد كل نتيجة، يُبقي النص في الحافظة لتلصقه في أي مكان بـ Ctrl+V.",
+  },
+  admin_mode: { en: "Type into admin windows", ar: "الكتابة في نوافذ المسؤول" },
+  admin_mode_desc: {
+    en: "Windows blocks normal apps from typing into elevated windows (Task Manager, installers). Restart EchoFlow as administrator to dictate into those too.",
+    ar: "يمنع ويندوز التطبيقات العادية من الكتابة في النوافذ المُرفّعة (مدير المهام، المثبّتات). أعد تشغيل EchoFlow كمسؤول لإملاء النص فيها أيضاً.",
+  },
+  admin_active: { en: "Running as administrator", ar: "يعمل كمسؤول" },
+  restart_as_admin: { en: "Restart as administrator", ar: "إعادة التشغيل كمسؤول" },
+  paste_blocked_notice: {
+    en: "Couldn't type where you started. Your text is on the clipboard, paste with Ctrl+V. (Admin windows need Restart as administrator.)",
+    ar: "تعذّرت الكتابة حيث بدأت. نصّك في الحافظة، الصقه بـ Ctrl+V. (نوافذ المسؤول تتطلب إعادة التشغيل كمسؤول.)",
   },
   keep_line_breaks: { en: "Keep line breaks", ar: "إبقاء فواصل الأسطر" },
   keep_line_breaks_desc: {

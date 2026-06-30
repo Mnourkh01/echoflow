@@ -250,14 +250,24 @@ pub fn run_api(
     })
 }
 
-/// Model used for the CLI path. This is a light text transform (clean up /
-/// translate / tidy a prompt), so we force a fast, cheap model instead of
-/// inheriting the user's configured default (which may be Opus at high effort).
-/// Always-latest Haiku via the model alias, so a newer Haiku is picked up with
-/// no code change. A dated fallback covers the rare case the alias can't be
-/// served (overloaded / temporarily unavailable).
-const CLI_MODEL: &str = "haiku";
+/// Default CLI model. This is a light text transform (clean up / translate /
+/// tidy a prompt), so Haiku — fast and cheap — is the right default; the user
+/// can opt up to Sonnet/Opus in Settings when they want more polish. Aliases
+/// are passed through so a newer Haiku/Sonnet/Opus is picked up with no code
+/// change. A dated fallback covers the rare case the Haiku alias can't be served
+/// (overloaded / temporarily unavailable).
 const CLI_FALLBACK_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// Normalize the user's CLI model choice to a Claude model alias. Anything we
+/// don't recognize falls back to the fast default so a bad value can't break
+/// the enhance step.
+fn cli_model_alias(model: &str) -> &'static str {
+    match model.trim() {
+        "sonnet" => "sonnet",
+        "opus" => "opus",
+        _ => "haiku",
+    }
+}
 
 /// Hard ceiling on a CLI enhance call. Past this we kill the process and fall
 /// back to the raw transcript — the usual cause is a lost connection making the
@@ -272,16 +282,17 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(25);
 /// startup latency (and worse: the user's global CLAUDE.md / hooks can bleed into
 /// the output). So we strip the session down to the bone:
 ///   --system-prompt        replace the giant default agent prompt with just ours
-///   --model haiku           fast/cheap model alias (always-latest Haiku)
-///   --fallback-model <id>   dated Haiku if the alias is unavailable
+///   --model <alias>         the user's pick: haiku (default) / sonnet / opus
+///   --fallback-model <id>   dated Haiku if the Haiku alias is unavailable
 ///   --effort low            no extended thinking before a grammar fix
 ///   --tools ""              load no tool schemas, no agentic tool-use loop
 ///   --safe-mode             disable CLAUDE.md / skills / plugins / hooks / MCP
 ///                           (keeps subscription auth + model selection working)
 ///   --no-session-persistence  don't write a session transcript to disk per call
-pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<String> {
+pub fn run_cli(command: &str, model: &str, system_prompt: &str, user_text: &str) -> Result<String> {
     let command = command.trim();
     let exe = if command.is_empty() { "claude" } else { command };
+    let model = cli_model_alias(model);
 
     let mut cmd = Command::new(exe);
     cmd.arg("-p")
@@ -290,10 +301,14 @@ pub fn run_cli(command: &str, system_prompt: &str, user_text: &str) -> Result<St
         .arg("--system-prompt")
         .arg(system_prompt)
         .arg("--model")
-        .arg(CLI_MODEL)
-        .arg("--fallback-model")
-        .arg(CLI_FALLBACK_MODEL)
-        .arg("--effort")
+        .arg(model);
+    // The dated fallback is a Haiku id, so only attach it when the chosen model
+    // is Haiku. For Sonnet/Opus a failure should surface (and fall back to the
+    // raw transcript upstream), not silently drop to Haiku quality.
+    if model == "haiku" {
+        cmd.arg("--fallback-model").arg(CLI_FALLBACK_MODEL);
+    }
+    cmd.arg("--effort")
         .arg("low")
         .arg("--tools")
         .arg("")

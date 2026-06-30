@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { X, Trash2, AlertTriangle, RefreshCw, Volume2 } from "lucide-react";
+import { X, Trash2, AlertTriangle, RefreshCw, Volume2, ShieldCheck } from "lucide-react";
 import type { ApiUsage, DownloadEnd, DownloadProgress, ModelInfo, OutputMode, Settings } from "../lib/api";
 import { api } from "../lib/api";
 import { checkForUpdate, installUpdate } from "../lib/updater";
@@ -66,6 +66,15 @@ const DEFAULT_API_MODEL: Record<string, string> = {
   custom: "",
 };
 
+// CLI (subscription) model choices for the enhance step. Haiku is the default —
+// fast and free on the user's plan, and right for light text cleanup. Sonnet 5
+// and Opus trade speed for polish. Values are Claude CLI aliases.
+const CLI_MODELS: { value: string; key: StringKey }[] = [
+  { value: "haiku", key: "cli_model_haiku" },
+  { value: "sonnet", key: "cli_model_sonnet" },
+  { value: "opus", key: "cli_model_opus" },
+];
+
 // Recognition languages (what Whisper transcribes). "auto" is added in the UI.
 // Value is the Whisper code; label is the native name. European entries carry
 // their diacritics natively.
@@ -126,6 +135,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
   const [version, setVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
+  const [elevated, setElevated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const settingsLangRef = useRef<Lang>("en");
   settingsLangRef.current = settings?.ui_lang ?? "en";
@@ -139,6 +149,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
     api.getSettings().then(setSettings);
     api.listInputDevices().then(setDevices).catch(() => setDevices([]));
     api.getUsage().then(setUsage).catch(() => {});
+    api.isElevated().then(setElevated).catch(() => setElevated(false));
     getVersion().then(setVersion).catch(() => {});
     setConfirmClear(false);
     setCleared(false);
@@ -414,14 +425,32 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               <p className="mt-1.5 text-xs text-ink-500">{t("engine_hint")}</p>
 
               {settings.ai_engine === "cli" ? (
-                <input
-                  value={settings.cli_command}
-                  onChange={(e) => patch({ cli_command: e.target.value })}
-                  placeholder="claude"
-                  spellCheck={false}
-                  dir="ltr"
-                  className="field mt-2"
-                />
+                <div className="mt-2 space-y-2">
+                  <input
+                    value={settings.cli_command}
+                    onChange={(e) => patch({ cli_command: e.target.value })}
+                    placeholder="claude"
+                    spellCheck={false}
+                    dir="ltr"
+                    className="field"
+                  />
+                  <label className="block">
+                    <span className="mb-1 block text-xs text-ink-500">{t("cli_model")}</span>
+                    <select
+                      value={settings.cli_model || "haiku"}
+                      onChange={(e) => patch({ cli_model: e.target.value })}
+                      className="field"
+                      dir="ltr"
+                    >
+                      {CLI_MODELS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {t(m.key)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="text-xs text-ink-500">{t("cli_model_hint")}</p>
+                </div>
               ) : (
                 <div className="mt-2 space-y-2">
                   <select
@@ -753,6 +782,28 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               onChange={(v) => patch({ keep_line_breaks: v })}
             />
           )}
+          {settings.auto_type && (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink-300">{t("admin_mode")}</p>
+                <p className="text-xs text-ink-500">{t("admin_mode_desc")}</p>
+              </div>
+              {elevated ? (
+                <span className="mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs text-accent-soft">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {t("admin_active")}
+                </span>
+              ) : (
+                <button
+                  onClick={() => api.relaunchAsAdmin().catch((e) => setWarn(String(e)))}
+                  className="mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.06] px-2.5 py-1 text-xs text-ink-200 hover:text-white"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {t("restart_as_admin")}
+                </button>
+              )}
+            </div>
+          )}
           <Toggle
             label={t("sound_cue")}
             desc={t("sound_cue_desc")}
@@ -788,7 +839,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     type="range"
                     min={0}
                     max={100}
-                    step={5}
+                    step={1}
                     value={settings.sound_volume}
                     onChange={(e) => patch({ sound_volume: Number(e.target.value) })}
                     onMouseUp={() => previewSound(settings.sound_pack, settings.sound_volume, "start")}

@@ -135,6 +135,7 @@ impl Db {
                     segments: Vec::new(),
                     translate_warning: false,
                     enhance_failed: false,
+                    paste_blocked: false,
                 })
             },
         ).map_err(|e| anyhow!("recording {id} not found: {e}"))?;

@@ -25,6 +25,9 @@ export interface RecordingResult {
   // True when an AI enhance step (clean/translate/prompt) failed (usually offline)
   // and the app fell back to the raw transcript.
   enhance_failed?: boolean;
+  // True when auto-type couldn't reach the origin field (window gone, or an admin
+  // window blocking input). Text was left on the clipboard instead.
+  paste_blocked?: boolean;
 }
 
 export interface RecordingSummary {
@@ -68,6 +71,7 @@ export interface Settings {
   voice_commands: boolean; // raw mode: spoken "new line"/"period"/... -> real punctuation
   ai_engine: "cli" | "api";
   cli_command: string;
+  cli_model: string; // CLI model: "haiku" (default) | "sonnet" | "opus"
   api_provider: "anthropic" | "openai" | "custom";
   api_key: string;
   api_model: string;
@@ -141,5 +145,7 @@ export const api = {
   getUsage: () => invoke<ApiUsage>("get_usage"),
   resetUsage: () => invoke<void>("reset_usage"),
   appStatus: () => invoke<AppStatus>("app_status"),
+  isElevated: () => invoke<boolean>("is_elevated"),
+  relaunchAsAdmin: () => invoke<void>("relaunch_as_admin"),
   showPillMenu: () => invoke<void>("show_pill_menu"),
 };

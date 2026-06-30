@@ -70,13 +70,21 @@ const PACKS: Record<string, Pack> = {
   },
 };
 
-const MAX_PEAK = 0.26; // ceiling so even at 100% it stays comfortable, never harsh
+// Ceiling at full volume. Raised from the old 0.26 so users who want a clearly
+// audible cue can get one, while a gentle perceptual curve (below) keeps the low
+// and middle of the slider soft, so it's "loud enough but not too loud".
+const MAX_PEAK = 0.4;
 
 function render(tone: Tone, vol: number) {
   const ac = audio();
   if (!ac || vol <= 0) return;
   const now = ac.currentTime;
-  const peak = Math.max(0.0001, vol * MAX_PEAK);
+  // Map the 0..1 slider to loudness with a mild curve: ear-perceived loudness is
+  // roughly logarithmic, so a linear slider feels like it does little until the
+  // very top. Easing (vol^1.3) keeps small values quiet for fine control and
+  // lets the top of the slider reach the full, louder ceiling.
+  const eased = Math.pow(Math.max(0, Math.min(1, vol)), 1.3);
+  const peak = Math.max(0.0001, eased * MAX_PEAK);
 
   // Master gain shared by the base tone + any partials, with one smooth envelope.
   const master = ac.createGain();

@@ -197,7 +197,9 @@ export default function App() {
       refreshHistory();
       setRecState("idle");
       setLevel(0);
-      if (e.payload.translate_warning) {
+      if (e.payload.paste_blocked) {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "paste_blocked_notice"));
+      } else if (e.payload.translate_warning) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
       } else if (e.payload.enhance_failed) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));

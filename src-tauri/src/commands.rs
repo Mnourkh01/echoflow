@@ -138,16 +138,100 @@ fn lang_code_for(target: &str) -> String {
     .to_string()
 }
 
-/// Type the text into whatever app/field currently has focus (system-wide
-/// dictation). Primary path is clipboard + Ctrl+V: it inserts the whole string
-/// atomically, which is reliable for long text and correct for Unicode (Arabic).
-/// Synthesizing one key event per character drops characters on longer text and
-/// can mangle Unicode (the "only some words / random dots" bug), so it is only a
-/// fallback when the clipboard is unavailable.
+/// The window that owns focus right now, unless it belongs to our own process
+/// (recording was started from EchoFlow's own window, so there's no external
+/// field to remember). Returns the raw HWND value, which is `Send`.
 #[cfg(windows)]
-fn type_into_focused(text: &str, leave_on_clipboard: bool) {
+fn foreground_external_window() -> Option<isize> {
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let h = GetForegroundWindow();
+        if h.is_null() {
+            return None;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(h, &mut pid);
+        if pid == GetCurrentProcessId() {
+            return None; // our own window: nothing to restore to
+        }
+        Some(h as isize)
+    }
+}
+
+/// Bring the saved target window back to the foreground so the paste lands in
+/// the field the user started in (even after they tabbed away). Uses the
+/// AttachThreadInput trick so `SetForegroundWindow` is allowed from a background
+/// app, then verifies it actually took. Returns true only when the target is
+/// confirmed foreground afterwards. A false result means the window is gone or
+/// the OS blocked the focus change (elevated/admin window), which the caller
+/// turns into a clipboard-only fallback.
+#[cfg(windows)]
+fn restore_focus(hwnd: isize) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
+        SetForegroundWindow,
+    };
+
+    let target = hwnd as HWND;
+    unsafe {
+        if IsWindow(target) == 0 {
+            return false; // window closed since recording started
+        }
+        if GetForegroundWindow() as isize == hwnd {
+            return true; // never left it; the common case
+        }
+        let target_thread = GetWindowThreadProcessId(target, std::ptr::null_mut());
+        let our_thread = GetCurrentThreadId();
+        let attached = our_thread != target_thread && AttachThreadInput(our_thread, target_thread, 1) != 0;
+        SetForegroundWindow(target);
+        BringWindowToTop(target);
+        if attached {
+            AttachThreadInput(our_thread, target_thread, 0);
+        }
+        // Let the foreground change settle, then confirm it actually took.
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        GetForegroundWindow() as isize == hwnd
+    }
+}
+
+/// Type the text into the dictation target (system-wide). When `target` is set,
+/// we first restore focus to the window that was active when recording began, so
+/// the text lands where the user started even if they tabbed away to reference
+/// something. With no target, it types into whatever has focus now.
+///
+/// Primary path is clipboard + Ctrl+V: it inserts the whole string atomically,
+/// which is reliable for long text and correct for Unicode (Arabic). Synthesizing
+/// one key event per character drops characters on longer text and can mangle
+/// Unicode (the "only some words / random dots" bug), so it is only a fallback
+/// when the clipboard is unavailable.
+///
+/// Returns true when delivery was BLOCKED: the origin window is gone or is an
+/// elevated app that refuses input from this normal-rights process. In that case
+/// the text is left on the clipboard so it isn't lost, and the caller tells the
+/// user to paste (or restart as administrator).
+#[cfg(windows)]
+fn type_into_focused(text: &str, leave_on_clipboard: bool, target: Option<isize>) -> bool {
     if text.is_empty() {
-        return;
+        return false;
+    }
+    // Restore the origin field first. If we can't (window gone, or an admin
+    // window blocking us), don't blind-paste into whatever happens to be focused
+    // now — that could land the text in the wrong app. Leave it on the clipboard
+    // and report blocked.
+    if let Some(hwnd) = target {
+        if !restore_focus(hwnd) {
+            let _ = clipboard::set_text(text);
+            log::warn!(
+                "auto-type: could not focus the origin window; left {} chars on the clipboard",
+                text.chars().count()
+            );
+            return true;
+        }
     }
     // Preserve the user's clipboard, paste ours, then restore it — unless we're
     // told to leave the result on the clipboard (auto-copy) for pasting elsewhere.
@@ -172,6 +256,7 @@ fn type_into_focused(text: &str, leave_on_clipboard: bool) {
             }
         }
     }
+    false
 }
 
 /// Fallback: synthesize Unicode key events in small chunks with a brief pause so
@@ -337,18 +422,25 @@ mod clipboard {
 }
 
 #[cfg(not(windows))]
-fn type_into_focused(_text: &str, _leave_on_clipboard: bool) {
+fn foreground_external_window() -> Option<isize> {
+    None
+}
+
+#[cfg(not(windows))]
+fn type_into_focused(_text: &str, _leave_on_clipboard: bool, _target: Option<isize>) -> bool {
     log::warn!("auto-type into the active app is only implemented on Windows");
+    false
 }
 
 /// Run the transcript through the configured AI engine (local CLI or the user's
 /// own API key). On the API path, token usage is recorded for the cost meter.
 fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, String> {
-    let (engine, cli_command, provider, base_url, api_key, api_model) = {
+    let (engine, cli_command, cli_model, provider, base_url, api_key, api_model) = {
         let s = state.settings.read();
         (
             s.ai_engine.clone(),
             s.cli_command.clone(),
+            s.cli_model.clone(),
             s.api_provider.clone(),
             s.api_base_url.clone(),
             s.api_key.clone(),
@@ -367,7 +459,7 @@ fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, Str
         );
         Ok(r.text)
     } else {
-        enhance::run_cli(&cli_command, system, text).map_err(|e| e.to_string())
+        enhance::run_cli(&cli_command, &cli_model, system, text).map_err(|e| e.to_string())
     }
 }
 
@@ -386,6 +478,11 @@ pub fn begin_recording(state: &AppState, device: Option<String>) -> Result<(), S
     state.level.store(0, Ordering::Relaxed);
     let handle = audio::start(dev, state.level.clone()).map_err(|e| e.to_string())?;
     *slot = Some(handle);
+    // Remember the field that has focus right now — pressing a global hotkey does
+    // not steal foreground, so this is the user's real target. We restore it
+    // before typing, so they can tab away to reference things mid-dictation and
+    // the text still lands where they started.
+    state.set_target_window(foreground_external_window());
     Ok(())
 }
 
@@ -549,6 +646,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
 
     let has = has_words(&transcript.full_text);
     let did_type = inject && auto_type && has;
+    let mut paste_blocked = false;
     if did_type {
         // A spoken "new line" command is an explicit request for a break, so keep
         // newlines when raw voice commands produced any, even if keep_line_breaks
@@ -560,7 +658,8 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         } else {
             one_line(&transcript.full_text)
         };
-        type_into_focused(&typed, auto_copy);
+        // Restore the field the user started in (handles tabbing away), then type.
+        paste_blocked = type_into_focused(&typed, auto_copy, state.target_window());
     } else if auto_copy && has {
         // Not typing into another app (in-app capture, or auto-type off): leave the
         // result on the clipboard so the user can paste it anywhere.
@@ -583,6 +682,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         segments: transcript.segments,
         translate_warning,
         enhance_failed,
+        paste_blocked,
     }))
 }
 
@@ -803,6 +903,87 @@ pub fn app_status(state: State<AppState>) -> AppStatus {
         } else {
             "whisper.cpp (CPU)".to_string()
         },
+    }
+}
+
+/// Whether this process is running with administrator rights. When true, auto-
+/// type can reach elevated windows (Task Manager and other admin apps); when
+/// false, those windows block input and dictation falls back to the clipboard.
+/// Best-effort: any failure reports `false`.
+#[tauri::command]
+pub fn is_elevated() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return false;
+            }
+            let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut ret_len: u32 = 0;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                &mut elevation as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut ret_len,
+            );
+            CloseHandle(token);
+            ok != 0 && elevation.TokenIsElevated != 0
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Relaunch EchoFlow with administrator rights (triggers a UAC prompt). On
+/// success the elevated instance starts and this one exits so the app never runs
+/// twice. Used by the optional "type into admin windows" setting. If the user
+/// declines the UAC prompt, nothing changes and an error is returned.
+#[tauri::command]
+pub fn relaunch_as_admin(app: AppHandle) -> R<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        if is_elevated() {
+            return Ok(()); // already elevated; nothing to do
+        }
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe_w: Vec<u16> = exe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
+        let h = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                exe_w.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL as i32,
+            )
+        };
+        // ShellExecuteW returns an HINSTANCE; a value <= 32 means it failed (the
+        // usual cause being the user dismissing the UAC prompt).
+        if (h as isize) <= 32 {
+            return Err("could not restart as administrator (was the prompt declined?)".into());
+        }
+        // Elevated instance is starting; quit this one so we don't run two copies.
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("running as administrator is only available on Windows".into())
     }
 }
 

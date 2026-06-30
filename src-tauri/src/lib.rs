@@ -357,6 +357,8 @@ pub fn run() {
             commands::get_usage,
             commands::reset_usage,
             commands::app_status,
+            commands::is_elevated,
+            commands::relaunch_as_admin,
             commands::show_pill_menu,
         ])
         .run(tauri::generate_context!())

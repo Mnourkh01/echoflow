@@ -26,6 +26,12 @@ pub struct RecordingResult {
     /// transcript. Lets the UI tell the user their words are raw, not enhanced.
     /// Always false for stored rows.
     pub enhance_failed: bool,
+    /// True when auto-type couldn't deliver into the origin field — the window
+    /// the user started in is gone, or it's an elevated app (Task Manager and
+    /// other admin windows block input from a normal-rights app). The text is
+    /// left on the clipboard instead, and the UI tells the user to paste (or to
+    /// restart as administrator). Always false for stored rows.
+    pub paste_blocked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +69,7 @@ pub struct Settings {
     pub voice_commands: bool,  // raw mode: spoken "new line"/"period"/... become real punctuation
     pub ai_engine: String,    // "cli" (default) | "api"
     pub cli_command: String,  // CLI used when ai_engine == "cli" (e.g. "claude")
+    pub cli_model: String,    // model for the CLI path: "haiku" (default) | "sonnet" | "opus"
     pub api_provider: String, // "anthropic" | "openai" | "custom"
     pub api_key: String,      // user's own key (stored locally only)
     pub api_model: String,    // model id for the chosen provider
@@ -101,6 +108,7 @@ impl Default for Settings {
             voice_commands: false,
             ai_engine: "cli".to_string(),
             cli_command: "claude".to_string(),
+            cli_model: "haiku".to_string(),
             api_provider: "anthropic".to_string(),
             api_key: String::new(),
             api_model: String::new(),
