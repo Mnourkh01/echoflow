@@ -1,5 +1,6 @@
 import { Mic, Square, Loader2 } from "lucide-react";
 import LevelMeter from "./LevelMeter";
+import RobotMascot from "./RobotMascot";
 import { useT } from "../lib/i18n";
 
 export type RecState = "idle" | "recording" | "transcribing";
@@ -9,6 +10,11 @@ interface Props {
   level: number;
   elapsedMs: number;
   onToggle: () => void;
+  /** Record-button look. "orb" = the glass sphere; "robot" = the mascot. */
+  variant?: "orb" | "robot";
+  /** Transient mood for the robot (result / error / update / mode-switch);
+   *  ignored by the orb. */
+  flash?: "happy" | "sad" | "update" | "switch" | null;
 }
 
 function fmt(ms: number) {
@@ -18,10 +24,11 @@ function fmt(ms: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export default function RecordControl({ state, level, elapsedMs, onToggle }: Props) {
+export default function RecordControl({ state, level, elapsedMs, onToggle, variant = "orb", flash }: Props) {
   const { t } = useT();
   const recording = state === "recording";
   const busy = state === "transcribing";
+  const robot = variant === "robot";
 
   // The orb is a glass sphere; the light INSIDE it is the voice. The light fills
   // most of the glass even at rest, so it reads as a glowing sphere (not a dark
@@ -34,6 +41,15 @@ export default function RecordControl({ state, level, elapsedMs, onToggle }: Pro
 
   return (
     <div className="flex flex-col items-center gap-5 py-7">
+      {robot ? (
+        <RobotMascot
+          state={state}
+          level={level}
+          onToggle={onToggle}
+          flash={flash}
+          label={recording ? t("stop_recording") : t("start_recording")}
+        />
+      ) : (
       <div className="relative grid h-28 w-28 place-items-center">
         {/* Ambient aurora halo — bleeds the orb's glow into the surrounding space
             so it reads as a light source, not a disc dropped on black. */}
@@ -75,7 +91,7 @@ export default function RecordControl({ state, level, elapsedMs, onToggle }: Pro
               opacity: lightOpacity,
               transform: `scale(${lightScale})`,
               backgroundImage:
-                "radial-gradient(circle at 50% 36%, rgb(var(--aurora-teal)) 0%, rgb(var(--aurora-iris)) 55%, rgb(var(--aurora-violet) / 0.15) 85%)",
+                "radial-gradient(circle at 50% 30%, rgb(var(--aurora-teal)) 0%, rgb(var(--aurora-iris)) 48%, rgb(var(--aurora-violet)) 100%)",
             }}
           />
           {/* Glass shell: a thin bright rim over the light (no dark bezel). */}
@@ -103,10 +119,13 @@ export default function RecordControl({ state, level, elapsedMs, onToggle }: Pro
           </span>
         </button>
       </div>
+      )}
 
-      <div className="h-10 w-full max-w-sm">
-        <LevelMeter level={level} active={recording} />
-      </div>
+      {!robot && (
+        <div className="h-10 w-full max-w-sm">
+          <LevelMeter level={level} active={recording} />
+        </div>
+      )}
 
       <div className="text-sm text-ink-400">
         {busy ? (

@@ -64,6 +64,8 @@ export interface Settings {
   sound_pack: string; // chime set: soft | marimba | glass | pop | chime
   sound_volume: number; // 0..100
   accent: string; // accent palette key: iris | teal | amber | rose | emerald | sky
+  mic_style: string; // record-button look: "orb" | "robot"
+  pill_style: string; // floating pill visualizer: "wave" | "pulse" | "dots" | "minimal"
   noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;

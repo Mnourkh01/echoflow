@@ -1,0 +1,5 @@
+start.ogg, stop.ogg
+  Source: Kenney Interface Sounds (confirmation_001, close_001)
+  Author: Kenney (kenney.nl)
+  License: CC0 1.0 Universal (public domain) — free for any use, no attribution required.
+  https://kenney.nl/assets/interface-sounds

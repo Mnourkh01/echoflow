@@ -341,7 +341,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   className={[
                     "flex-1 rounded-lg px-3 py-2 text-sm transition",
                     settings.ui_lang === m
-                      ? "bg-accent text-white"
+                      ? "accent-grad text-white"
                       : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
@@ -367,7 +367,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   className={[
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.output_mode === m
-                      ? "bg-accent text-white"
+                      ? "accent-grad text-white"
                       : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
@@ -414,7 +414,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     className={[
                       "flex-1 rounded-lg px-3 py-2 text-sm transition",
                       settings.ai_engine === m
-                        ? "bg-accent text-white"
+                        ? "accent-grad text-white"
                         : "bg-white/[0.05] text-ink-400 hover:text-white",
                     ].join(" ")}
                   >
@@ -570,14 +570,14 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                 onClick={testing ? stopMicTest : startMicTest}
                 className={[
                   "rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                  testing ? "bg-accent text-white" : "bg-white/[0.05] text-ink-200 hover:text-white",
+                  testing ? "accent-grad text-white" : "bg-white/[0.05] text-ink-200 hover:text-white",
                 ].join(" ")}
               >
                 {testing ? t("stop_test") : t("test_mic")}
               </button>
               <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
                 <div
-                  className="h-full rounded-full bg-accent transition-[width] duration-75"
+                  className="h-full rounded-full accent-grad transition-[width] duration-75"
                   style={{ width: `${Math.min(100, Math.round(testLevel * 140))}%` }}
                 />
               </div>
@@ -611,7 +611,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       {prog && (
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                           <div
-                            className="h-full bg-accent transition-all"
+                            className="h-full accent-grad transition-all"
                             style={{ width: `${pct(prog)}%` }}
                           />
                         </div>
@@ -645,7 +645,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       ) : (
                         <button
                           onClick={() => startDownload(m)}
-                          className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white hover:bg-accent-deep"
+                          className="rounded-md accent-grad px-2.5 py-1 text-xs font-medium text-white transition hover:brightness-110"
                         >
                           {t("download")}
                         </button>
@@ -726,7 +726,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   className={[
                     "flex-1 rounded-lg px-3 py-2 text-sm transition",
                     settings.capture_mode === m
-                      ? "bg-accent text-white"
+                      ? "accent-grad text-white"
                       : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
@@ -824,7 +824,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       className={[
                         "rounded-lg px-3 py-2 text-sm transition",
                         settings.sound_pack === p
-                          ? "bg-accent text-white"
+                          ? "accent-grad text-white"
                           : "bg-white/[0.05] text-ink-400 hover:text-white",
                       ].join(" ")}
                     >
@@ -832,6 +832,9 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     </button>
                   ))}
                 </div>
+                {settings.sound_pack === "custom" && (
+                  <p className="mt-1.5 text-xs text-ink-500">{t("sound_custom_hint")}</p>
+                )}
               </Field>
               <Field label={t("sound_volume")}>
                 <div className="flex items-center gap-3">
@@ -889,6 +892,44 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             </div>
             <p className="mt-1.5 text-xs text-ink-500">{t("accent_color_hint")}</p>
           </Field>
+          <Field label={t("mic_style")}>
+            <div className="flex gap-2">
+              {(["orb", "robot"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => patch({ mic_style: m })}
+                  className={[
+                    "flex-1 rounded-lg px-3 py-2 text-sm transition",
+                    (settings.mic_style || "orb") === m
+                      ? "accent-grad text-white"
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
+                  ].join(" ")}
+                >
+                  {t(m === "orb" ? "mic_style_orb" : "mic_style_robot")}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-500">{t("mic_style_hint")}</p>
+          </Field>
+          <Field label={t("pill_style")}>
+            <div className="grid grid-cols-4 gap-2">
+              {(["wave", "pulse", "dots", "minimal"] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => patch({ pill_style: p })}
+                  className={[
+                    "rounded-lg px-2 py-2 text-xs transition",
+                    (settings.pill_style || "wave") === p
+                      ? "accent-grad text-white"
+                      : "bg-white/[0.05] text-ink-400 hover:text-white",
+                  ].join(" ")}
+                >
+                  {t(`pill_style_${p}` as StringKey)}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-500">{t("pill_style_hint")}</p>
+          </Field>
           <Toggle
             label={t("noise_suppression")}
             desc={t("noise_suppression_desc")}
@@ -906,7 +947,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   className={[
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.retention_days === days
-                      ? "bg-accent text-white"
+                      ? "accent-grad text-white"
                       : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
@@ -926,7 +967,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                   className={[
                     "rounded-lg px-3 py-2 text-sm transition",
                     settings.idle_unload_minutes === mins
-                      ? "bg-accent text-white"
+                      ? "accent-grad text-white"
                       : "bg-white/[0.05] text-ink-400 hover:text-white",
                   ].join(" ")}
                 >
@@ -1011,7 +1052,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
           </button>
           <button
             onClick={save}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-deep"
+            className="rounded-lg accent-grad px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
           >
             {t("save")}
           </button>
@@ -1053,7 +1094,7 @@ function Toggle({
         onClick={() => onChange(!checked)}
         className={[
           "mt-0.5 h-6 w-11 shrink-0 rounded-full p-0.5 transition",
-          checked ? "bg-accent" : "bg-white/15",
+          checked ? "accent-grad" : "bg-white/15",
         ].join(" ")}
       >
         <span

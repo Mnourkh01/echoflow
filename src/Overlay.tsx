@@ -8,8 +8,9 @@ import logo from "./assets/echoflow.png";
 
 type Mode = "idle" | "recording" | "processing";
 
-// Static per-bar multipliers so the waveform looks lively, not uniform.
-const BARS = [0.45, 0.8, 1, 0.65, 0.95, 0.55, 0.85];
+// A denser waveform reads more like a modern voice UI. Center bars are tallest
+// (Siri-style envelope); a small deterministic jitter keeps it lively.
+const N_BARS = 13;
 
 /**
  * The floating always-on-top pill. It self-shows when recording starts (so you
@@ -19,6 +20,7 @@ const BARS = [0.45, 0.8, 1, 0.65, 0.95, 0.55, 0.85];
 export default function Overlay() {
   const [mode, setMode] = useState<Mode>("idle");
   const [level, setLevel] = useState(0);
+  const [pillStyle, setPillStyle] = useState<string>("wave");
   // Briefly true after a Translate-mode dictation that was already in the target
   // language (nothing to translate) so the pill can flag "you're still on Translate".
   const [warn, setWarn] = useState(false);
@@ -58,8 +60,17 @@ export default function Overlay() {
   // The pill is its own window/document, so apply the accent palette here too
   // (and keep it in sync when settings change from the main window / tray).
   useEffect(() => {
-    api.getSettings().then((s) => applyAccent(s.accent)).catch(() => {});
-    const off = listen<Settings>("settings-changed", (e) => applyAccent(e.payload.accent));
+    api
+      .getSettings()
+      .then((s) => {
+        applyAccent(s.accent);
+        setPillStyle(s.pill_style || "wave");
+      })
+      .catch(() => {});
+    const off = listen<Settings>("settings-changed", (e) => {
+      applyAccent(e.payload.accent);
+      setPillStyle(e.payload.pill_style || "wave");
+    });
     return () => {
       off.then((f) => f());
     };
@@ -113,6 +124,107 @@ export default function Overlay() {
   const active = mode === "recording";
   const processing = mode === "processing";
 
+  // The pill's voice visualizer, user-selectable in Settings. Every style reacts
+  // to the live level, breathes at idle, and runs a scanner while transcribing.
+  function renderVisual() {
+    if (pillStyle === "pulse") {
+      const s = processing ? 15 : active ? 9 + level * 15 : 9;
+      return (
+        <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center">
+          <span
+            className={!active && !processing ? "pill-breathe" : ""}
+            style={{
+              width: s,
+              height: s,
+              borderRadius: 999,
+              background: active || processing ? "radial-gradient(circle at 40% 35%, rgb(var(--aurora-teal)), rgb(var(--aurora-iris)))" : "rgb(255 255 255 / 0.25)",
+              boxShadow: active ? `0 0 ${6 + level * 12}px rgb(var(--aurora-teal) / 0.85)` : processing ? "0 0 9px rgb(var(--aurora-iris) / 0.75)" : undefined,
+              transition: "width 100ms ease-out, height 100ms ease-out, box-shadow 100ms ease-out",
+            }}
+          />
+        </div>
+      );
+    }
+
+    if (pillStyle === "dots") {
+      return (
+        <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center gap-[3px]">
+          {Array.from({ length: 5 }).map((_, i) => {
+            const env = 1 - (Math.abs(i - 2) / 2) * 0.5;
+            if (processing) {
+              return <span key={i} className="pill-wave" style={{ width: 4, height: 4, borderRadius: 999, background: "rgb(var(--aurora-iris))", boxShadow: "0 0 5px rgb(var(--aurora-iris) / 0.7)", animationDelay: `${i * 0.08}s` }} />;
+            }
+            const rise = active ? Math.min(9, level * 22 * env) : 0;
+            return (
+              <span
+                key={i}
+                className={active ? "" : "pill-breathe"}
+                style={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: 999,
+                  background: active ? "rgb(var(--aurora-teal))" : "rgb(255 255 255 / 0.28)",
+                  boxShadow: active && rise > 3 ? "0 0 6px rgb(var(--aurora-teal) / 0.85)" : undefined,
+                  transform: `translateY(${-rise}px)`,
+                  transition: "transform 90ms ease-out",
+                  animationDelay: `${i * 0.12}s`,
+                }}
+              />
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (pillStyle === "minimal") {
+      const w = processing ? 62 : active ? Math.min(92, 24 + level * 95) : 20;
+      return (
+        <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center">
+          <span
+            className={processing ? "pill-wave" : ""}
+            style={{
+              height: 3,
+              width: `${w}%`,
+              borderRadius: 999,
+              background: active || processing ? "linear-gradient(to right, transparent, rgb(var(--aurora-teal)), rgb(var(--aurora-iris)), transparent)" : "rgb(255 255 255 / 0.2)",
+              boxShadow: active ? "0 0 8px rgb(var(--aurora-teal) / 0.7)" : undefined,
+              transition: "width 110ms ease-out",
+            }}
+          />
+        </div>
+      );
+    }
+
+    // "wave" (default): the aurora waveform.
+    return (
+      <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center gap-[2px]">
+        {Array.from({ length: N_BARS }).map((_, i) => {
+          const c = (N_BARS - 1) / 2;
+          const env = 1 - (Math.abs(i - c) / c) * 0.6;
+          const e = env * (0.8 + 0.2 * Math.abs(Math.sin(i * 1.7)));
+          if (processing) {
+            return <span key={i} className="pill-wave w-[2px] rounded-full" style={{ height: "60%", background: "linear-gradient(to top, rgb(var(--aurora-iris)), rgb(var(--aurora-teal)))", boxShadow: "0 0 5px rgb(var(--aurora-iris) / 0.7)", animationDelay: `${i * 0.05}s` }} />;
+          }
+          const h = active ? Math.max(12, Math.min(100, 12 + level * 108 * e)) : 18 * e;
+          const lit = active && level * e > 0.12;
+          return (
+            <span
+              key={i}
+              className={active ? "w-[2px] rounded-full" : "pill-breathe w-[2px] rounded-full"}
+              style={{
+                height: `${h}%`,
+                background: active ? "linear-gradient(to top, rgb(var(--aurora-iris)), rgb(var(--aurora-teal)))" : "rgb(255 255 255 / 0.22)",
+                boxShadow: lit ? "0 0 6px rgb(var(--aurora-teal) / 0.85)" : undefined,
+                transition: "height 90ms ease-out",
+                animationDelay: active ? undefined : `${(i % 5) * 0.14}s`,
+              }}
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div
       data-tauri-drag-region
@@ -135,36 +247,26 @@ export default function Overlay() {
           <span className="text-[10px] font-medium leading-none">On Translate</span>
         </div>
       ) : (
-        <div data-tauri-drag-region className="flex h-4 flex-1 items-center justify-center gap-[3px]">
-          {BARS.map((b, i) => {
-            const h = processing
-              ? 55
-              : active
-                ? Math.max(16, Math.min(100, 16 + level * 95 * b))
-                : 20 * b;
-            return (
-              <span
-                key={i}
-                className={[
-                  "w-[2px] rounded-full transition-[height] duration-100",
-                  active
-                    ? "bg-aurora-teal"
-                    : processing
-                      ? "bg-aurora-iris/70 animate-pulse"
-                      : "bg-white/20",
-                ].join(" ")}
-                style={{ height: `${h}%` }}
-              />
-            );
-          })}
-        </div>
+        renderVisual()
       )}
       <button
         onClick={restore}
         title="Open EchoFlow"
-        className="grid h-7 w-7 shrink-0 place-items-center rounded-full transition hover:bg-white/5"
+        className="relative grid h-7 w-7 shrink-0 place-items-center rounded-full transition hover:bg-white/5"
       >
-        <img src={logo} alt="EchoFlow" draggable={false} className="h-6 w-6" />
+        {(active || processing) && (
+          <span
+            aria-hidden
+            className="pill-ring pointer-events-none absolute inset-0 rounded-full"
+            style={{
+              background:
+                "conic-gradient(from 0deg, transparent 0deg, rgb(var(--aurora-teal)) 90deg, rgb(var(--aurora-iris)) 210deg, transparent 320deg)",
+              WebkitMask: "radial-gradient(farthest-side, transparent 62%, #000 64%)",
+              mask: "radial-gradient(farthest-side, transparent 62%, #000 64%)",
+            }}
+          />
+        )}
+        <img src={logo} alt="EchoFlow" draggable={false} className="relative h-6 w-6" />
       </button>
     </div>
   );

@@ -62,6 +62,8 @@ pub struct Settings {
     pub sound_pack: String,   // which chime set: "soft" | "marimba" | "glass" | "pop" | "chime"
     pub sound_volume: i64,    // chime loudness 0..100
     pub accent: String,       // accent palette key: "iris" | "teal" | "amber" | "rose" | "emerald" | "sky"
+    pub mic_style: String,    // record-button look: "orb" (glass sphere) | "robot" (animated mascot)
+    pub pill_style: String,   // floating pill visualizer: "wave" | "pulse" | "dots" | "minimal"
     pub noise_suppression: bool, // RNNoise denoise on the mic before transcription
     pub output_mode: String,  // "raw" | "translate" | "polish" | "prompt"
     pub translate_target: String, // language name to translate INTO (e.g. "English")
@@ -99,6 +101,8 @@ impl Default for Settings {
             sound_pack: "soft".to_string(),
             sound_volume: 70,
             accent: "iris".to_string(),
+            mic_style: "orb".to_string(),
+            pill_style: "wave".to_string(),
             // Default OFF: a real VAD now trims silence, and raw mic into Whisper
             // is cleaner for most rooms. Still a toggle for noisy environments.
             noise_suppression: false,

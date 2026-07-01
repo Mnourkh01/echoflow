@@ -13,6 +13,7 @@
   --accent-soft: 154 140 255;
   --accent-deep: 168 85 247;
   --accent-cyan: 46 230 198;
+  --accent-grad: linear-gradient(120deg, rgb(46 230 198) 0%, rgb(123 107 248) 50%, rgb(168 85 247) 100%);
 }
 
 html,
@@ -76,6 +77,11 @@ html.overlay #root {
   .btn-aurora {
     @apply rounded-xl bg-gradient-to-br from-aurora-teal/90 via-accent to-accent-deep text-white shadow-orb transition hover:brightness-110;
   }
+  /* Fills an element with the current accent GRADIENT (drives selected chips +
+     primary buttons so gradient palettes actually look like gradients). */
+  .accent-grad {
+    background-image: var(--accent-grad);
+  }
 }
 
 /* Thin, quiet scrollbars that fit a desktop tool. */
@@ -129,6 +135,124 @@ html.overlay #root {
 .echo-ring { animation: echo-ring 1.8s ease-out infinite; }
 .echo-breathe { animation: echo-breathe 1.6s ease-in-out infinite; }
 .aurora-drift { animation: aurora-drift 9s ease-in-out infinite; }
+
+/* ── Robot mascot mic ─────────────────────────────────────────────────────
+   A cute TV-head companion that stands in for the orb. It idles with a gentle
+   float + blink, perks up and bobs while listening, "thinks" while transcribing,
+   and loves a tap (squish + hearts). All transforms use fill-box origins so the
+   SVG parts pivot around themselves. prefers-reduced-motion (above) flattens it. */
+@keyframes robot-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes robot-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-3px) rotate(-2.5deg); }
+  75% { transform: translateY(-1px) rotate(2.5deg); }
+}
+@keyframes robot-blink { 0%, 90%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.08); } }
+@keyframes robot-ant-l { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(6deg); } }
+@keyframes robot-ant-r { 0%, 100% { transform: rotate(7deg); } 50% { transform: rotate(-6deg); } }
+@keyframes robot-heart-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.16); } }
+@keyframes robot-think { 0%, 100% { opacity: 0.25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+@keyframes robot-heart-rise {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(0.4); }
+  18% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -58px) scale(1.1); }
+}
+@keyframes robot-squish {
+  0% { transform: scale(1, 1); }
+  30% { transform: scale(1.09, 0.9); }
+  60% { transform: scale(0.96, 1.05); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes robot-shake {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  20% { transform: translateX(-4px) rotate(-3deg); }
+  40% { transform: translateX(4px) rotate(3deg); }
+  60% { transform: translateX(-3px) rotate(-2deg); }
+  80% { transform: translateX(3px) rotate(2deg); }
+}
+.rb-float { animation: robot-float 3.4s ease-in-out infinite; }
+.rb-bob { animation: robot-bob 1.1s ease-in-out infinite; }
+.rb-blink { transform-box: fill-box; transform-origin: center; animation: robot-blink 4.6s ease-in-out infinite; }
+.rb-ant-l { transform-box: fill-box; transform-origin: bottom center; animation: robot-ant-l 2.9s ease-in-out infinite; }
+.rb-ant-r { transform-box: fill-box; transform-origin: bottom center; animation: robot-ant-r 2.9s ease-in-out infinite; }
+.rb-heart { transform-box: fill-box; transform-origin: center; animation: robot-heart-pulse 1.9s ease-in-out infinite; }
+.rb-think-dot { animation: robot-think 1.1s ease-in-out infinite; }
+.rb-squish { transform-box: fill-box; transform-origin: center bottom; animation: robot-squish 0.34s ease-out; }
+.rb-shake { transform-box: fill-box; transform-origin: center; animation: robot-shake 0.42s ease-in-out; }
+.rb-heart-rise { animation: robot-heart-rise 1.1s ease-out forwards; }
+
+/* Idle whimsy: the eyes occasionally glance left then right so the face never
+   freezes, plus a curious "?" that pops up when it's recording but hears nothing. */
+@keyframes robot-eye-wander {
+  0%, 40%, 100% { transform: translateX(0); }
+  48%, 56% { transform: translateX(-4px); }
+  70%, 80% { transform: translateX(4px); }
+}
+@keyframes robot-q-pop {
+  0% { opacity: 0; transform: translateY(6px) scale(0.5) rotate(-10deg); }
+  45% { opacity: 1; transform: translateY(-2px) scale(1.12) rotate(4deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+@keyframes robot-q-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.rb-wander { transform-box: fill-box; transform-origin: center; animation: robot-eye-wander 7s ease-in-out infinite; }
+.rb-q { animation: robot-q-pop 0.45s ease-out backwards, robot-q-bob 1.8s ease-in-out 0.45s infinite; }
+
+/* Floating-bot motion: arms wave, antenna + belly twinkle, a celebratory bounce
+   for happy/update/mode-switch, and a curious head tilt. */
+@keyframes robot-arm-l { 0%, 100% { transform: rotate(-15deg); } 50% { transform: rotate(-25deg); } }
+@keyframes robot-arm-r { 0%, 100% { transform: rotate(15deg); } 50% { transform: rotate(25deg); } }
+@keyframes robot-twinkle { 0%, 100% { opacity: 0.55; transform: scale(0.82); } 50% { opacity: 1; transform: scale(1.18); } }
+@keyframes robot-bounce {
+  0% { transform: translateY(0); }
+  28% { transform: translateY(-12px); }
+  50% { transform: translateY(0); }
+  72% { transform: translateY(-5px); }
+  100% { transform: translateY(0); }
+}
+@keyframes robot-shadow { 0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.18; } 50% { transform: translateX(-50%) scale(0.82); opacity: 0.12; } }
+.rb-arm-l { transform-box: fill-box; transform-origin: 88% 28%; animation: robot-arm-l 2.6s ease-in-out infinite; }
+.rb-arm-r { transform-box: fill-box; transform-origin: 12% 28%; animation: robot-arm-r 2.6s ease-in-out infinite; }
+.rb-twinkle { transform-box: fill-box; transform-origin: center; animation: robot-twinkle 1.2s ease-in-out infinite; }
+.rb-bounce { animation: robot-bounce 0.7s ease-out; }
+.rb-tilt { transform: rotate(-7deg); transition: transform 0.3s ease; }
+.rb-shadow { animation: robot-shadow 3.2s ease-in-out infinite; }
+
+/* ── Living orb mascot ─────────────────────────────────────────────────────
+   Metaball blobs orbit a core and fuse through a gooey SVG filter, so the app's
+   aurora reads as a single breathing organism that ripples with the voice. */
+@keyframes orb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes orb-spin-rev { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+@keyframes orb-core { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+.orb-sat { transform-box: view-box; transform-origin: 100px 104px; }
+.orb-spin-1 { animation: orb-spin 7s linear infinite; }
+.orb-spin-2 { animation: orb-spin-rev 9.5s linear infinite; }
+.orb-spin-3 { animation: orb-spin 5.5s linear infinite; }
+.orb-spin-4 { animation: orb-spin-rev 11s linear infinite; }
+.orb-spin-5 { animation: orb-spin 8.2s linear infinite; }
+.orb-core { transform-box: fill-box; transform-origin: center; animation: orb-core 3s ease-in-out infinite; }
+.orb-ring { transform-box: view-box; transform-origin: 100px 104px; animation: orb-spin 2.4s linear infinite; }
+
+/* ── JARVIS-style holographic data sphere ──────────────────────────────────
+   Wireframe globe + orbiting rings + dense radial data-streaks spinning around a
+   hot core. Everything pivots around the sphere centre (120,120). */
+@keyframes jv-globe { 0% { transform: scaleX(1); } 50% { transform: scaleX(-1); } 100% { transform: scaleX(1); } }
+@keyframes jv-flicker { 0%, 100% { opacity: 0.85; } 45% { opacity: 0.55; } 70% { opacity: 1; } }
+.jv-rot { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin 26s linear infinite; }
+.jv-rot-mid { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin-rev 15s linear infinite; }
+.jv-rot-fast { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin 8s linear infinite; }
+.jv-globe { transform-box: view-box; transform-origin: 120px 120px; animation: jv-globe 8s ease-in-out infinite; }
+.jv-core { transform-box: fill-box; transform-origin: center; animation: orb-core 2.6s ease-in-out infinite; }
+.jv-flicker { animation: jv-flicker 3.5s ease-in-out infinite; }
+
+/* ── Floating pill ─────────────────────────────────────────────────────────
+   A spinning aurora ring around the logo while active, and a travelling
+   "scanner" wave across the bars while transcribing. */
+@keyframes pill-spin { to { transform: rotate(360deg); } }
+@keyframes pill-wave { 0%, 100% { transform: scaleY(0.4); opacity: 0.45; } 50% { transform: scaleY(1); opacity: 1; } }
+@keyframes pill-breathe { 0%, 100% { transform: scaleY(0.7); opacity: 0.6; } 50% { transform: scaleY(1); opacity: 0.9; } }
+.pill-ring { animation: pill-spin 1.5s linear infinite; }
+.pill-wave { transform-origin: center; animation: pill-wave 0.9s ease-in-out infinite; }
+.pill-breathe { transform-origin: center; animation: pill-breathe 2.4s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
   * {

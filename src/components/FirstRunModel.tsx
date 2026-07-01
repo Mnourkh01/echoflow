@@ -60,7 +60,7 @@ export default function FirstRunModel({ onReady }: Props) {
           <div className="mt-4">
             <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
               <div
-                className="h-full rounded-full bg-accent transition-[width]"
+                className="h-full rounded-full accent-grad transition-[width]"
                 style={{ width: `${pct}%` }}
               />
             </div>

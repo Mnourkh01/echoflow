@@ -63,7 +63,7 @@ export default function Onboarding({ onClose }: Props) {
                 key={idx}
                 className={[
                   "h-1.5 rounded-full transition-all",
-                  idx === i ? "w-5 bg-accent" : "w-1.5 bg-white/15",
+                  idx === i ? "w-5 accent-grad" : "w-1.5 bg-white/15",
                 ].join(" ")}
               />
             ))}

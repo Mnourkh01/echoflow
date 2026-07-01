@@ -41,6 +41,16 @@ export default function App() {
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2500);
   }, []);
 
+  // Transient mood for the robot mascot: happy = result, sad = error/no-speech,
+  // update = new version, switch = mode/language change. Cleared automatically;
+  // ignored by the orb mic style.
+  type MicMood = "happy" | "sad" | "update" | "switch";
+  const [micMood, setMicMood] = useState<MicMood | null>(null);
+  const flashMic = useCallback((mood: MicMood) => {
+    setMicMood(mood);
+    window.setTimeout(() => setMicMood((m) => (m === mood ? null : m)), 1500);
+  }, []);
+
   // Refs so global/keyboard event handlers always see the latest state.
   const recStateRef = useRef(recState);
   recStateRef.current = recState;
@@ -73,6 +83,7 @@ export default function App() {
         if (cancelled) return;
         setUpdate(upd);
         if (upd) {
+          flashMic("update");
           const lang = settingsRef.current?.ui_lang ?? "en";
           notifyUpdateOnce(
             upd.version,
@@ -115,6 +126,7 @@ export default function App() {
         setCurrent(res);
         setActiveId(res.id);
         await refreshHistory();
+        flashMic("happy");
         if (res.translate_warning) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
         } else if (res.enhance_failed) {
@@ -122,15 +134,17 @@ export default function App() {
         }
       } else {
         // Silent mis-click: discarded by the backend.
+        flashMic("sad");
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
       }
     } catch (e) {
+      flashMic("sad");
       setError(String(e));
     } finally {
       setRecState("idle");
       setLevel(0);
     }
-  }, [refreshHistory, flashNotice]);
+  }, [refreshHistory, flashNotice, flashMic]);
 
   const toggle = useCallback(() => {
     if (recStateRef.current === "recording") stop();
@@ -197,6 +211,7 @@ export default function App() {
       refreshHistory();
       setRecState("idle");
       setLevel(0);
+      flashMic("happy");
       if (e.payload.paste_blocked) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "paste_blocked_notice"));
       } else if (e.payload.translate_warning) {
@@ -209,10 +224,12 @@ export default function App() {
       setError(e.payload);
       setRecState("idle");
       setLevel(0);
+      flashMic("sad");
     });
     const offCanceled = listen("rec-canceled", () => {
       setRecState("idle");
       setLevel(0);
+      flashMic("sad");
       flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
     });
     // Output mode (and other settings) can change from the tray menu; keep the UI in sync.
@@ -225,7 +242,7 @@ export default function App() {
       offCanceled.then((f) => f());
       offSettings.then((f) => f());
     };
-  }, [refreshHistory, flashNotice]);
+  }, [refreshHistory, flashNotice, flashMic]);
 
   // Apply the app language direction to the whole document.
   const uiLang = settings?.ui_lang ?? "en";
@@ -246,24 +263,26 @@ export default function App() {
     if (!settingsRef.current) return;
     const next = { ...settingsRef.current, output_mode: mode };
     setSettings(next);
+    flashMic("switch");
     try {
       await api.updateSettings(next);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [flashMic]);
 
   // Quick language change from the header (Auto / EN / AR / European): persist now.
   const changeLang = useCallback(async (mode: string) => {
     if (!settingsRef.current) return;
     const next = { ...settingsRef.current, language_mode: mode };
     setSettings(next);
+    flashMic("switch");
     try {
       await api.updateSettings(next);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [flashMic]);
 
   // Mark the first-run walkthrough as seen (skip or finish), persist it.
   const completeOnboarding = useCallback(async () => {
@@ -405,6 +424,8 @@ export default function App() {
               level={level}
               elapsedMs={elapsed}
               onToggle={toggle}
+              variant={settings?.mic_style === "robot" ? "robot" : "orb"}
+              flash={micMood}
             />
             <TranscriptView rec={current} onTogglePin={togglePin} onSavePrompt={savePrompt} />
           </>

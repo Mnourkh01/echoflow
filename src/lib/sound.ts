@@ -1,10 +1,16 @@
-// Soft start/stop cues via the Web Audio API. Every pack is a short, gentle
-// tone with a smooth attack and release (no clicks, no harsh beeps). Volume and
-// the chosen pack come from settings; nothing is bundled (pure synthesis).
+// Soft start/stop cues via the Web Audio API. Every cue is a short, gentle tone
+// with a smooth envelope and a low-pass filter so it sounds warm, not beepy.
+// Nothing is bundled (pure synthesis). Volume + pack come from settings.
+//
+// Design rules that keep these pleasant (not the earlier "weird" swoops):
+//   - almost NO pitch glide (a big from→to sweep reads as a toy siren)
+//   - warm mid/low pitches (300–700 Hz); high tones sound cheap/piercing
+//   - sine/triangle only, minimal consonant partials (octave) at low gain
+//   - soft attack + smooth exponential release
+//   - a shared low-pass rolls off any harshness
 
 let ctx: AudioContext | null = null;
 
-// Module-level config kept in sync with settings (set via `configureSound`).
 let volume = 0.7; // 0..1
 let pack = "soft";
 
@@ -28,11 +34,11 @@ type Partial = { mult: number; gain: number }; // harmonic relative to the base
 interface Tone {
   type: OscillatorType;
   from: number; // base frequency at onset
-  to: number; // base frequency glide target
+  to: number; // base frequency glide target (keep close to `from`)
   dur: number; // seconds
   attack: number; // seconds to peak
   release: number; // seconds of tail
-  partials?: Partial[]; // extra harmonics for richer timbres (bell/glass)
+  partials?: Partial[]; // extra harmonics for a richer timbre
 }
 
 interface Pack {
@@ -40,69 +46,83 @@ interface Pack {
   stop: Tone;
 }
 
-// All packs are deliberately mellow: low gain, soft envelopes, pleasant
-// intervals. `start` rises (open), `stop` falls (close).
+// Curated, warm cues. `start` sits a touch higher than `stop` so open/close read
+// differently, but the glide within each is tiny so nothing swoops.
 const PACKS: Record<string, Pack> = {
-  // Clean sine swoops — the original cue, gentle and neutral.
+  // Clean, neutral sine — the default.
   soft: {
-    start: { type: "sine", from: 520, to: 740, dur: 0.18, attack: 0.02, release: 0.14 },
-    stop: { type: "sine", from: 700, to: 470, dur: 0.18, attack: 0.02, release: 0.14 },
+    start: { type: "sine", from: 440, to: 466, dur: 0.16, attack: 0.008, release: 0.14 },
+    stop: { type: "sine", from: 466, to: 415, dur: 0.16, attack: 0.008, release: 0.14 },
   },
-  // Warm wooden pluck (triangle, quick decay) — like a marimba tap.
-  marimba: {
-    start: { type: "triangle", from: 392, to: 523, dur: 0.2, attack: 0.006, release: 0.18, partials: [{ mult: 2, gain: 0.25 }] },
-    stop: { type: "triangle", from: 523, to: 349, dur: 0.2, attack: 0.006, release: 0.18, partials: [{ mult: 2, gain: 0.25 }] },
-  },
-  // Bright shimmer with a high partial — airy, glassy.
-  glass: {
-    start: { type: "sine", from: 680, to: 920, dur: 0.26, attack: 0.015, release: 0.22, partials: [{ mult: 2.01, gain: 0.3 }, { mult: 3, gain: 0.12 }] },
-    stop: { type: "sine", from: 900, to: 640, dur: 0.26, attack: 0.015, release: 0.22, partials: [{ mult: 2.01, gain: 0.3 }] },
-  },
-  // Rounded short bloop — minimal and quick.
+  // Short rounded bloop.
   pop: {
-    start: { type: "sine", from: 560, to: 620, dur: 0.1, attack: 0.008, release: 0.08 },
-    stop: { type: "sine", from: 520, to: 440, dur: 0.1, attack: 0.008, release: 0.08 },
+    start: { type: "sine", from: 420, to: 392, dur: 0.09, attack: 0.004, release: 0.085 },
+    stop: { type: "sine", from: 360, to: 320, dur: 0.09, attack: 0.004, release: 0.085 },
   },
-  // Bell-like with stacked partials and a long, soft tail.
+  // Warm wooden tap (triangle + octave, quick decay).
+  marimba: {
+    start: { type: "triangle", from: 523, to: 523, dur: 0.18, attack: 0.004, release: 0.17, partials: [{ mult: 2, gain: 0.18 }] },
+    stop: { type: "triangle", from: 392, to: 392, dur: 0.18, attack: 0.004, release: 0.17, partials: [{ mult: 2, gain: 0.18 }] },
+  },
+  // Gentle bell with a soft octave and a longer, mellow tail.
   chime: {
-    start: { type: "sine", from: 660, to: 660, dur: 0.4, attack: 0.01, release: 0.36, partials: [{ mult: 2, gain: 0.4 }, { mult: 2.76, gain: 0.18 }] },
-    stop: { type: "sine", from: 528, to: 528, dur: 0.4, attack: 0.01, release: 0.36, partials: [{ mult: 2, gain: 0.4 }, { mult: 2.76, gain: 0.18 }] },
+    start: { type: "sine", from: 587, to: 587, dur: 0.3, attack: 0.006, release: 0.28, partials: [{ mult: 2, gain: 0.22 }] },
+    stop: { type: "sine", from: 494, to: 494, dur: 0.3, attack: 0.006, release: 0.28, partials: [{ mult: 2, gain: 0.22 }] },
+  },
+  // Crisp, tiny tick — minimal and quick.
+  click: {
+    start: { type: "sine", from: 680, to: 680, dur: 0.055, attack: 0.002, release: 0.05 },
+    stop: { type: "sine", from: 540, to: 540, dur: 0.055, attack: 0.002, release: 0.05 },
+  },
+  // Low, mellow, grounded (sine + octave).
+  warm: {
+    start: { type: "sine", from: 330, to: 349, dur: 0.22, attack: 0.01, release: 0.2, partials: [{ mult: 2, gain: 0.2 }] },
+    stop: { type: "sine", from: 330, to: 294, dur: 0.22, attack: 0.01, release: 0.2, partials: [{ mult: 2, gain: 0.2 }] },
   },
 };
 
-// Ceiling at full volume. Raised from the old 0.26 so users who want a clearly
-// audible cue can get one, while a gentle perceptual curve (below) keeps the low
-// and middle of the slider soft, so it's "loud enough but not too loud".
-const MAX_PEAK = 0.4;
+// Ceiling at full volume, pushed high for clear audibility over media playback.
+const MAX_PEAK = 0.92;
 
 function render(tone: Tone, vol: number) {
   const ac = audio();
   if (!ac || vol <= 0) return;
   const now = ac.currentTime;
-  // Map the 0..1 slider to loudness with a mild curve: ear-perceived loudness is
-  // roughly logarithmic, so a linear slider feels like it does little until the
-  // very top. Easing (vol^1.3) keeps small values quiet for fine control and
-  // lets the top of the slider reach the full, louder ceiling.
-  const eased = Math.pow(Math.max(0, Math.min(1, vol)), 1.3);
+  const eased = Math.pow(Math.max(0, Math.min(1, vol)), 0.7);
   const peak = Math.max(0.0001, eased * MAX_PEAK);
 
-  // Master gain shared by the base tone + any partials, with one smooth envelope.
+  // Master gain (one smooth envelope) → low-pass (warmth) → out.
   const master = ac.createGain();
   master.gain.setValueAtTime(0.0001, now);
   master.gain.exponentialRampToValueAtTime(peak, now + tone.attack);
   master.gain.exponentialRampToValueAtTime(0.0001, now + tone.dur + tone.release);
-  master.connect(ac.destination);
 
-  const voices: Array<{ mult: number; gain: number }> = [
-    { mult: 1, gain: 1 },
-    ...(tone.partials ?? []),
-  ];
+  const lp = ac.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 6500; // keep presence/audibility; only tame the very top
+  lp.Q.value = 0.5;
+
+  // Makeup gain (well above 1) then a limiter, so the cue is genuinely loud and
+  // cuts through media playback without clipping/distortion.
+  const makeup = ac.createGain();
+  makeup.gain.value = 1.9;
+  const limiter = ac.createDynamicsCompressor();
+  limiter.threshold.value = -4;
+  limiter.knee.value = 4;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.002;
+  limiter.release.value = 0.12;
+  master.connect(lp).connect(makeup).connect(limiter).connect(ac.destination);
+
+  const voices: Array<{ mult: number; gain: number }> = [{ mult: 1, gain: 1 }, ...(tone.partials ?? [])];
   for (const v of voices) {
     const osc = ac.createOscillator();
     const g = ac.createGain();
     osc.type = tone.type;
     osc.frequency.setValueAtTime(tone.from * v.mult, now);
-    osc.frequency.exponentialRampToValueAtTime(tone.to * v.mult, now + Math.max(0.05, tone.dur * 0.7));
+    if (tone.to !== tone.from) {
+      osc.frequency.exponentialRampToValueAtTime(tone.to * v.mult, now + Math.max(0.05, tone.dur * 0.7));
+    }
     g.gain.value = v.gain;
     osc.connect(g).connect(master);
     osc.start(now);
@@ -114,14 +134,60 @@ function packOf(key: string): Pack {
   return PACKS[key] ?? PACKS.soft;
 }
 
-export const playStart = () => render(packOf(pack).start, volume);
-export const playStop = () => render(packOf(pack).stop, volume);
+// Custom recorded cues: drop real audio files (any modern, royalty-free
+// notification you like) into `public/sounds/` as start.mp3 + stop.mp3. Real
+// recordings are far louder and cleaner than synthesis. Played via
+// HTMLAudioElement; if a file is missing, it just no-ops (no crash).
+const SAMPLE_URLS: Record<"start" | "stop", string> = {
+  start: "/sounds/start.ogg",
+  stop: "/sounds/stop.ogg",
+};
+// How far above the raw file level we can push (a limiter after catches peaks),
+// so a soft recording still comes out loud.
+const SAMPLE_BOOST = 5;
+const buffers: { start?: AudioBuffer; stop?: AudioBuffer } = {};
+
+async function playSample(which: "start" | "stop", vol: number) {
+  const ac = audio();
+  if (!ac || vol <= 0) return;
+  try {
+    let buf = buffers[which];
+    if (!buf) {
+      const res = await fetch(SAMPLE_URLS[which]);
+      buf = await ac.decodeAudioData(await res.arrayBuffer());
+      buffers[which] = buf;
+    }
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    // Amplify well past 1.0 (Web Audio allows it), then limit so it stays loud
+    // but never clips — this is why it can be louder than the file itself.
+    const gain = ac.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, vol)) * SAMPLE_BOOST;
+    const limiter = ac.createDynamicsCompressor();
+    limiter.threshold.value = -3;
+    limiter.knee.value = 4;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.12;
+    src.connect(gain).connect(limiter).connect(ac.destination);
+    src.start();
+  } catch {
+    /* ignore */
+  }
+}
+
+export const playStart = () => (pack === "custom" ? playSample("start", volume) : render(packOf(pack).start, volume));
+export const playStop = () => (pack === "custom" ? playSample("stop", volume) : render(packOf(pack).stop, volume));
 
 /** Play a one-off preview (used by the settings picker) without changing config. */
 export function previewSound(packKey: string, vol: number, which: "start" | "stop" = "start") {
+  if (packKey === "custom") {
+    playSample(which, Math.max(0, Math.min(1, vol / 100)));
+    return;
+  }
   const p = packOf(packKey);
   render(which === "stop" ? p.stop : p.start, Math.max(0, Math.min(1, vol / 100)));
 }
 
 /** The ordered list of pack keys for the settings UI. */
-export const SOUND_PACKS = ["soft", "marimba", "glass", "pop", "chime"] as const;
+export const SOUND_PACKS = ["soft", "pop", "marimba", "chime", "click", "warm", "custom"] as const;
