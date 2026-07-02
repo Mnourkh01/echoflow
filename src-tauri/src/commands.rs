@@ -448,8 +448,12 @@ fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, Str
         )
     };
 
+    // Delimit the dictation so the model treats it as inert transcript, never
+    // as instructions addressed to it (the "it answered me instead of cleaning
+    // my words" failure, which capable models hit on command-shaped dictation).
+    let wrapped = enhance::wrap_transcript(text);
     if engine == "api" {
-        let r = enhance::run_api(&provider, &base_url, &api_key, &api_model, system, text)
+        let r = enhance::run_api(&provider, &base_url, &api_key, &api_model, system, &wrapped)
             .map_err(|e| e.to_string())?;
         let _ = state.db.add_usage(r.input_tokens as i64, r.output_tokens as i64);
         log::info!(
@@ -457,9 +461,11 @@ fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, Str
             r.input_tokens,
             r.output_tokens
         );
-        Ok(r.text)
+        Ok(enhance::unwrap_transcript(&r.text))
     } else {
-        enhance::run_cli(&cli_command, &cli_model, system, text).map_err(|e| e.to_string())
+        enhance::run_cli(&cli_command, &cli_model, system, &wrapped)
+            .map(|t| enhance::unwrap_transcript(&t))
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -599,6 +605,12 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                 terms.join(", ")
             ));
         }
+        // The output contract must stay the LAST thing the model reads; repeat
+        // it after any appended lines so nothing dilutes it.
+        system.push_str(
+            "\nFINAL RULE: your entire output is ONLY the transformed transcript text. \
+Never a reply, never an answer, never new content.",
+        );
         if has_words(&transcript.full_text) {
             match run_enhance(state, &system, &transcript.full_text) {
                 Ok(out) => {
