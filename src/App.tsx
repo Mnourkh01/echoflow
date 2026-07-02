@@ -56,6 +56,8 @@ export default function App() {
   recStateRef.current = recState;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // Declared here (above start/stop) so both closures share it without TDZ risk.
+  const cancelingRef = useRef(false);
 
   const refreshHistory = useCallback(async (q: string | null = null) => {
     setHistory(await api.listRecordings(q && q.length ? q : null));
@@ -106,6 +108,7 @@ export default function App() {
   const start = useCallback(async () => {
     if (recStateRef.current !== "idle") return;
     setError(null);
+    cancelingRef.current = false;
     try {
       await api.startRecording(settingsRef.current?.input_device ?? null);
       if (settingsRef.current?.sound ?? true) playStart();
@@ -132,6 +135,10 @@ export default function App() {
         } else if (res.enhance_failed) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
         }
+      } else if (cancelingRef.current) {
+        // User hit cancel while transcribing: quiet discard, no sad face.
+        cancelingRef.current = false;
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "canceled_notice"));
       } else {
         // Silent mis-click: discarded by the backend.
         flashMic("sad");
@@ -150,6 +157,29 @@ export default function App() {
     if (recStateRef.current === "recording") stop();
     else if (recStateRef.current === "idle") start();
   }, [start, stop]);
+
+  // Cancel = discard, don't transcribe (the "said it wrong, retry" action).
+  // While recording it drops the clip; while transcribing it aborts the decode.
+  const cancel = useCallback(async () => {
+    if (recStateRef.current === "recording") {
+      cancelingRef.current = true;
+      try {
+        await api.cancelRecording();
+      } catch {
+        /* already stopped */
+      }
+      setRecState("idle");
+      setLevel(0);
+      flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "canceled_notice"));
+    } else if (recStateRef.current === "transcribing") {
+      cancelingRef.current = true;
+      try {
+        await api.cancelTranscription();
+      } catch {
+        /* decode already finished */
+      }
+    }
+  }, [flashNotice]);
 
   // Live level meter + elapsed timer while recording.
   useEffect(() => {
@@ -177,6 +207,11 @@ export default function App() {
         e.preventDefault();
         start();
       }
+      // Esc = discard, whether still recording or already transcribing.
+      if (e.code === "Escape" && !e.repeat && recStateRef.current !== "idle") {
+        e.preventDefault();
+        cancel();
+      }
     };
     const up = (e: KeyboardEvent) => {
       if (e.code === "Space" && !isTyping()) {
@@ -190,7 +225,7 @@ export default function App() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [start, stop]);
+  }, [start, stop, cancel]);
 
   // Global hotkey dictation is driven by Rust; it emits these events so the UI
   // can reflect state, play the cue sound, and show the typed-out result.
@@ -226,11 +261,20 @@ export default function App() {
       setLevel(0);
       flashMic("sad");
     });
-    const offCanceled = listen("rec-canceled", () => {
+    const offCanceled = listen<string>("rec-canceled", (e) => {
+      const wasActive = recStateRef.current !== "idle";
       setRecState("idle");
       setLevel(0);
-      flashMic("sad");
-      flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
+      if (e.payload === "user") {
+        // Deliberate cancel (from any surface): quiet reset. Only notice it if
+        // this window was actually mid-dictation (mic tests also emit this).
+        if (wasActive) {
+          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "canceled_notice"));
+        }
+      } else {
+        flashMic("sad");
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
+      }
     });
     // Output mode (and other settings) can change from the tray menu; keep the UI in sync.
     const offSettings = listen<Settings>("settings-changed", (e) => setSettings(e.payload));
@@ -424,6 +468,7 @@ export default function App() {
               level={level}
               elapsedMs={elapsed}
               onToggle={toggle}
+              onCancel={cancel}
               variant={settings?.mic_style === "robot" ? "robot" : "orb"}
               flash={micMood}
             />

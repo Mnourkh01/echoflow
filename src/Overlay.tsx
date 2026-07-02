@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Languages } from "lucide-react";
+import { Languages, X } from "lucide-react";
 import { api, type Settings } from "./lib/api";
 import { applyAccent } from "./lib/theme";
 import logo from "./assets/echoflow.png";
@@ -106,6 +106,17 @@ export default function Overlay() {
         }
       }
     }, hideDelay);
+  }
+
+  // Discard the take from the pill: drop the clip while recording, abort the
+  // decode while processing. Backend emits rec-canceled so every window resets.
+  async function cancelTake() {
+    try {
+      if (mode === "recording") await api.cancelRecording();
+      else if (mode === "processing") await api.cancelTranscription();
+    } catch {
+      /* already finished */
+    }
   }
 
   async function restore() {
@@ -248,6 +259,15 @@ export default function Overlay() {
         </div>
       ) : (
         renderVisual()
+      )}
+      {(active || processing) && (
+        <button
+          onClick={cancelTake}
+          title="Discard"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-ink-400 transition hover:bg-white/10 hover:text-red-300"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       )}
       <button
         onClick={restore}

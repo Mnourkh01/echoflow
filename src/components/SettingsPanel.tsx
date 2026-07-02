@@ -157,6 +157,28 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
     refreshModels();
   }, [open]);
 
+  // While the panel is open, mode/language can still change from the tray, the
+  // pill menu, or the header switchers. Merge those hot fields into the draft so
+  // Save doesn't clobber them with a stale snapshot.
+  useEffect(() => {
+    if (!open) return;
+    const off = listen<Settings>("settings-changed", (e) => {
+      setSettings((s) =>
+        s
+          ? {
+              ...s,
+              output_mode: e.payload.output_mode,
+              language_mode: e.payload.language_mode,
+              translate_target: e.payload.translate_target,
+            }
+          : s
+      );
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, [open]);
+
   // Live model-download events from the backend.
   useEffect(() => {
     if (!open) return;
@@ -782,7 +804,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               onChange={(v) => patch({ keep_line_breaks: v })}
             />
           )}
-          {settings.auto_type && (
+          <div className="space-y-3 rounded-xl border border-white/[0.05] bg-white/[0.03] p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm text-ink-300">{t("admin_mode")}</p>
@@ -803,7 +825,13 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                 </button>
               )}
             </div>
-          )}
+            <Toggle
+              label={t("always_admin")}
+              desc={t("always_admin_desc")}
+              checked={settings.always_admin}
+              onChange={(v) => patch({ always_admin: v })}
+            />
+          </div>
           <Toggle
             label={t("sound_cue")}
             desc={t("sound_cue_desc")}

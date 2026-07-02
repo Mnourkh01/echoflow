@@ -77,6 +77,7 @@ pub struct Settings {
     pub api_model: String,    // model id for the chosen provider
     pub api_base_url: String, // base URL for "custom" OpenAI-compatible endpoints
     pub ui_lang: String,      // app interface language: "en" | "ar"
+    pub always_admin: bool,   // relaunch elevated on every start (UAC prompt at launch)
     pub theme: String,
     pub retention_days: i64,  // auto-delete recordings older than this; 0 = keep everything
     pub idle_unload_minutes: i64, // free the model from RAM after this idle; 0 = keep loaded
@@ -118,6 +119,7 @@ impl Default for Settings {
             api_model: String::new(),
             api_base_url: String::new(),
             ui_lang: "en".to_string(),
+            always_admin: false,
             theme: "dark".to_string(),
             retention_days: 14,
             idle_unload_minutes: 5,

@@ -541,11 +541,29 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // Always transcribe in the spoken language first. The CLI step does the
     // language work (it handles Arabic dialects far better than Whisper's weak
     // built-in translate task), so native text is the right input for it.
-    let mut transcript = state
-        .transcribe(&audio_16k, &model, &lang_mode, false, &dialect, &vocab)
-        .map_err(|e| e.to_string())?;
+    // A user cancel (the cancel button while transcribing) surfaces as a decode
+    // error with the cancel flag set; treat it as a quiet discard, not an error.
+    let mut transcript =
+        match state.transcribe(&audio_16k, &model, &lang_mode, false, &dialect, &vocab) {
+            Ok(t) => t,
+            Err(_) if state.transcribe_canceled() => {
+                log::info!("transcription canceled by user; clip discarded");
+                return Ok(None);
+            }
+            Err(e) => return Err(e.to_string()),
+        };
     // Language the user actually spoke (detected in auto mode, or the forced code).
     let source_lang = transcript.language.clone();
+
+    // Custom vocabulary: fix the exact spelling/casing of the user's terms in
+    // the decoded text (the initial prompt only biases; this pass corrects).
+    // Runs BEFORE any enhance step so the LLM receives the right spellings too.
+    if !vocab.trim().is_empty() {
+        transcript.full_text = crate::text::apply_custom_vocab(&transcript.full_text, &vocab);
+        for seg in &mut transcript.segments {
+            seg.text = crate::text::apply_custom_vocab(&seg.text, &vocab);
+        }
+    }
 
     // In Translate mode, if the spoken language already matches the target (e.g.
     // English speech with target = English) there is nothing to translate, and
@@ -571,7 +589,16 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         "prompt" => Some(enhance::PROMPT_SYSTEM.to_string()),
         _ => None,
     };
-    if let Some(system) = cli_system {
+    if let Some(mut system) = cli_system {
+        // Tell the enhance model to keep the user's vocabulary spellings intact,
+        // otherwise it happily "corrects" names right back to mishearings.
+        let terms = crate::text::vocab_terms(&vocab);
+        if !terms.is_empty() {
+            system.push_str(&format!(
+                "\nPreserve these exact spellings wherever they appear: {}.",
+                terms.join(", ")
+            ));
+        }
         if has_words(&transcript.full_text) {
             match run_enhance(state, &system, &transcript.full_text) {
                 Ok(out) => {
@@ -585,17 +612,30 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                     } else {
                         source_lang.clone()
                     };
+                    // Belt and suspenders: even with the preserve-spellings
+                    // instruction, re-fix vocabulary terms on the model's output.
+                    if !vocab.trim().is_empty() {
+                        transcript.full_text =
+                            crate::text::apply_custom_vocab(&transcript.full_text, &vocab);
+                    }
                 }
                 Err(e) => {
                     log::warn!("{output_mode} enhance failed: {e}");
                     enhance_failed = true;
-                    // Translate must still yield something useful: fall back to
-                    // Whisper's offline English translate task.
-                    if output_mode == "translate" {
+                    // Whisper's built-in translate task can ONLY produce English,
+                    // so it is a valid offline fallback just when English is the
+                    // target. For any other target, keep the user's native words
+                    // plus the "not enhanced" warning — never silently hand back
+                    // the wrong language.
+                    if output_mode == "translate" && lang_code_for(&translate_target) == "en" {
                         if let Ok(mut t2) =
                             state.transcribe(&audio_16k, &model, &lang_mode, true, &dialect, &vocab)
                         {
                             t2.language = "en".to_string();
+                            if !vocab.trim().is_empty() {
+                                t2.full_text =
+                                    crate::text::apply_custom_vocab(&t2.full_text, &vocab);
+                            }
                             transcript = t2;
                             // Offline translate still produced English, so this
                             // isn't a raw-text fallback the user needs warning about.
@@ -723,12 +763,27 @@ pub fn spawn_silence_guard(app: AppHandle) {
     });
 }
 
+/// Discard the current recording without transcribing (the "said it wrong,
+/// let me retry" button). Emits `rec-canceled` with reason "user" so every
+/// window (main, pill) resets, regardless of which surface asked.
 #[tauri::command]
-pub fn cancel_recording(state: State<AppState>) -> R<()> {
+pub fn cancel_recording(app: AppHandle, state: State<AppState>) -> R<()> {
     if let Some(h) = state.recording.lock().take() {
         let _ = h.stop();
     }
     state.level.store(0, Ordering::Relaxed);
+    let _ = app.emit("rec-canceled", "user");
+    Ok(())
+}
+
+/// Abort the transcription currently running (after capture already stopped).
+/// The whisper abort callback picks the flag up and the decode returns without
+/// a result; the pending stop resolves as a quiet discard.
+#[tauri::command]
+pub fn cancel_transcription(state: State<AppState>) -> R<()> {
+    if state.is_busy() {
+        state.request_cancel_transcribe();
+    }
     Ok(())
 }
 
@@ -848,6 +903,16 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     // accent palette take effect everywhere without a restart.
     let _ = app.emit("settings-changed", state.settings.read().clone());
     let ok = if ptt != old_ptt || toggle != old_toggle {
+        // Re-registering drops every live shortcut for a moment. If a hold-mode
+        // recording is in flight, its release event would be lost and the
+        // recording would stick — discard it first so state stays consistent.
+        if state.is_recording() {
+            if let Some(h) = state.recording.lock().take() {
+                let _ = h.stop();
+            }
+            state.level.store(0, Ordering::Relaxed);
+            let _ = app.emit("rec-canceled", "user");
+        }
         register_shortcuts(&app, &ptt, &toggle)
     } else {
         true // unchanged: leave the live shortcuts intact

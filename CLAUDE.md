@@ -67,8 +67,17 @@ already installed on this machine.
 - Global PTT hotkey defaults to `CommandOrControl+Shift+Space`; in-app hold **Space** also works.
 - Models resolve from app-data `models/`, then exe-dir `models/`, then the source
   `src-tauri/models/` (dev). Filenames are `ggml-<name>.bin`.
-- CSP is `null` in this beta for dev convenience; tighten before production (Phase 3).
+- CSP is configured in `tauri.conf.json` (separate dev/prod policies).
 - GPU is off (CPU build). GPU is a Phase 3 cargo feature (Vulkan/CUDA).
+- Auto language detect is constrained to the settings-offered set (`AUTO_LANGS`
+  in `whisper.rs`) so dialectal Arabic can't misdetect as Farsi/Urdu.
+- Custom vocabulary = decoder bias (initial prompt) + deterministic fuzzy
+  post-correction (`text::apply_custom_vocab`) + a preserve-spellings line in
+  the enhance system prompts.
+- Esc / the X button cancels a take: while recording it discards the clip;
+  while transcribing it aborts the decode via the whisper abort callback.
+- `?preview=mascot` on the Vite dev server shows a browser-only harness for the
+  record control (dev builds only).
 
 ## Phases
 

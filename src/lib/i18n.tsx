@@ -61,6 +61,8 @@ const STRINGS = {
   // Record control
   transcribing: { en: "Transcribing", ar: "جارٍ التحويل" },
   no_speech_notice: { en: "No speech detected, discarded", ar: "لم يُكتشف كلام، تم التجاهل" },
+  canceled_notice: { en: "Recording discarded", ar: "تم تجاهل التسجيل" },
+  cancel_recording: { en: "Cancel", ar: "إلغاء" },
   translate_warning_notice: {
     en: "Still on Translate. You spoke the target language, so your words are kept as is.",
     ar: "ما زلت في وضع الترجمة. تحدثت باللغة الهدف، لذا عُرضت كلماتك كما هي.",
@@ -232,6 +234,11 @@ const STRINGS = {
   },
   admin_active: { en: "Running as administrator", ar: "يعمل كمسؤول" },
   restart_as_admin: { en: "Restart as administrator", ar: "إعادة التشغيل كمسؤول" },
+  always_admin: { en: "Always run as administrator", ar: "التشغيل دائماً كمسؤول" },
+  always_admin_desc: {
+    en: "Relaunch elevated on every start so dictation reaches admin windows. Windows shows a UAC prompt at each launch.",
+    ar: "إعادة التشغيل بصلاحيات مرتفعة عند كل بدء ليصل الإملاء إلى نوافذ المسؤول. يعرض ويندوز نافذة UAC عند كل تشغيل.",
+  },
   paste_blocked_notice: {
     en: "Couldn't type where you started. Your text is on the clipboard, paste with Ctrl+V. (Admin windows need Restart as administrator.)",
     ar: "تعذّرت الكتابة حيث بدأت. نصّك في الحافظة، الصقه بـ Ctrl+V. (نوافذ المسؤول تتطلب إعادة التشغيل كمسؤول.)",

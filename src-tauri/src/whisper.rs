@@ -2,10 +2,19 @@
 //! audio, and report the auto-detected language.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+/// Languages auto-detect is allowed to pick: exactly the set the app offers in
+/// Settings. Whisper ranks all ~99 languages, and dialectal Arabic routinely
+/// comes back as Farsi/Urdu (and accented English as Dutch/Afrikaans) when the
+/// whole list competes. Restricting the argmax to the supported set fixes those
+/// misdetections without touching forced-language mode.
+const AUTO_LANGS: &[&str] = &["en", "ar", "fr", "de", "es", "it", "pt", "nl"];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Segment {
@@ -27,6 +36,22 @@ pub struct WhisperEngine {
     pub model_name: String,
 }
 
+/// State read by the C-side abort callback: the user's cancel flag plus the
+/// runaway-watchdog deadline. Owned by the `decode_buffer` stack frame for the
+/// duration of the decode; whisper worker threads only ever read it.
+struct AbortCtl {
+    cancel: Arc<AtomicBool>,
+    deadline: std::time::Instant,
+}
+
+/// ggml abort callback: return true to abort the running graph. `user_data` is
+/// the `*const AbortCtl` registered in `decode_buffer` (guaranteed alive until
+/// `full()` returns). Atomics + `Instant` reads are thread-safe.
+unsafe extern "C" fn abort_trampoline(user_data: *mut std::ffi::c_void) -> bool {
+    let ctl = &*(user_data as *const AbortCtl);
+    ctl.cancel.load(Ordering::Relaxed) || std::time::Instant::now() > ctl.deadline
+}
+
 impl WhisperEngine {
     pub fn load(model_path: &Path, model_name: &str) -> Result<Self> {
         let path = model_path
@@ -44,6 +69,8 @@ impl WhisperEngine {
     /// before transcribing (so we can report real confidence and apply Arabic
     /// dialect priming automatically). `dialect` selects the Arabic prime.
     /// `translate` = true makes Whisper output English (translate task).
+    /// `cancel` aborts the decode when set (the user's cancel button); the
+    /// function then returns an error containing "canceled".
     pub fn transcribe(
         &self,
         audio_16k_mono: &[f32],
@@ -51,6 +78,7 @@ impl WhisperEngine {
         translate: bool,
         dialect: &str,
         vocab: &str,
+        cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -89,7 +117,7 @@ impl WhisperEngine {
         let sr = crate::audio::TARGET_RATE as usize;
         let long = audio_16k_mono.len() > (LONG_AUDIO_SECS * sr as f32) as usize;
         if !long || language == "auto" {
-            return self.decode_buffer(audio_16k_mono, &language, confidence, translate, dialect, vocab, threads);
+            return self.decode_buffer(audio_16k_mono, &language, confidence, translate, dialect, vocab, threads, cancel);
         }
 
         let bounds = split_at_silence(audio_16k_mono, sr);
@@ -98,8 +126,11 @@ impl WhisperEngine {
         let mut full = String::new();
         let mut segments = Vec::new();
         for (ci, &(lo, hi)) in bounds.iter().enumerate() {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(anyhow!("canceled"));
+            }
             let part =
-                self.decode_buffer(&audio_16k_mono[lo..hi], &language, confidence, translate, dialect, vocab, threads)?;
+                self.decode_buffer(&audio_16k_mono[lo..hi], &language, confidence, translate, dialect, vocab, threads, cancel)?;
             let offset_ms = (lo as f32 / sr as f32 * 1000.0) as i64;
             for mut seg in part.segments {
                 seg.start_ms += offset_ms;
@@ -125,6 +156,7 @@ impl WhisperEngine {
     /// concrete code, or "auto" to let Whisper detect during the decode (the code
     /// it used is recovered after). This is the unit the long-form windower calls
     /// once per window and the short path calls once for the whole clip.
+    #[allow(clippy::too_many_arguments)]
     fn decode_buffer(
         &self,
         audio_16k_mono: &[f32],
@@ -134,6 +166,7 @@ impl WhisperEngine {
         dialect: &str,
         vocab: &str,
         threads: i32,
+        cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
         let mut state = self
             .ctx
@@ -170,13 +203,29 @@ impl WhisperEngine {
         // (the "unresponsive after heavy use" failure). The budget is 20x this
         // buffer's real-time length — far above this CPU build's ~3x typical, so it
         // only ever trips on a true runaway, never a legitimate long dictation.
+        // The same callback also serves the user's cancel button: setting the
+        // shared flag makes whisper.cpp bail out at the next graph-node check.
         // On trip, `full()` returns an error the caller surfaces and recovers from.
+        //
+        // NOTE: this deliberately uses the raw callback API, NOT whisper-rs's
+        // `set_abort_callback_safe`. That wrapper (0.14.4) double-boxes the
+        // closure but its trampoline casts `user_data` back to the concrete
+        // closure type instead of `Box<dyn FnMut() -> bool>` — a type confusion
+        // that reads garbage and returns arbitrary abort decisions (it broke the
+        // decode outright once the closure captured an Arc). `abort_ctl` is
+        // owned by this stack frame and outlives `full()` below.
         let budget = {
             let audio_secs = audio_16k_mono.len() as f32 / crate::audio::TARGET_RATE as f32;
             std::time::Duration::from_secs_f32((audio_secs * 20.0).max(30.0))
         };
-        let decode_start = std::time::Instant::now();
-        params.set_abort_callback_safe(move || decode_start.elapsed() > budget);
+        let abort_ctl = Box::new(AbortCtl {
+            cancel: cancel.clone(),
+            deadline: std::time::Instant::now() + budget,
+        });
+        unsafe {
+            params.set_abort_callback(Some(abort_trampoline));
+            params.set_abort_callback_user_data(&*abort_ctl as *const AbortCtl as *mut _);
+        }
 
         // Initial prompt biases the decoder. Two independent sources, combined:
         //   - Arabic dictation gets an everyday-colloquial prime so the model stops
@@ -191,9 +240,13 @@ impl WhisperEngine {
             params.set_initial_prompt(p);
         }
 
-        state
-            .full(params, audio_16k_mono)
-            .map_err(|e| anyhow!("transcription failed: {e}"))?;
+        state.full(params, audio_16k_mono).map_err(|e| {
+            if cancel.load(Ordering::Relaxed) {
+                anyhow!("canceled")
+            } else {
+                anyhow!("transcription failed: {e}")
+            }
+        })?;
 
         let n = state
             .full_n_segments()
@@ -299,6 +352,8 @@ fn split_at_silence(samples: &[f32], sr: usize) -> Vec<(usize, usize)> {
 
 /// Detect the spoken language from the audio's mel spectrogram, returning the
 /// ISO code and its probability (0..1). Cheap relative to a full decode.
+/// The argmax runs over `AUTO_LANGS` only (see the const above); the raw global
+/// winner is used just as a fallback if none of the supported codes got a prob.
 fn detect_language(
     state: &mut whisper_rs::WhisperState,
     audio_16k_mono: &[f32],
@@ -310,6 +365,29 @@ fn detect_language(
     let (id, probs) = state
         .lang_detect(0, threads as usize)
         .map_err(|e| anyhow!("lang_detect failed: {e}"))?;
+
+    let mut best: Option<(&'static str, f32)> = None;
+    for (i, &p) in probs.iter().enumerate() {
+        let Some(code) = whisper_rs::get_lang_str(i as i32) else {
+            continue;
+        };
+        if !AUTO_LANGS.contains(&code) {
+            continue;
+        }
+        if best.map_or(true, |(_, bp)| p > bp) {
+            best = Some((code, p));
+        }
+    }
+    if let Some((code, confidence)) = best {
+        let global = whisper_rs::get_lang_str(id).unwrap_or("?");
+        if global != code {
+            log::info!(
+                "language detect: constrained to '{code}' ({confidence:.2}); global winner was '{global}'"
+            );
+        }
+        return Ok((code.to_string(), confidence));
+    }
+    // Fallback: probs vector didn't cover the supported set (shouldn't happen).
     let code = whisper_rs::get_lang_str(id)
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("unknown language id {id}"))?;
@@ -333,25 +411,32 @@ fn dialect_prompt(dialect: &str) -> &'static str {
 /// Build Whisper's `initial_prompt` from the two things that bias decoding: the
 /// Arabic colloquial prime (when relevant) and the user's custom vocabulary.
 /// Returns None when neither applies (so we don't set an empty prompt).
+///
+/// The vocabulary is presented as bare terms, as if they were part of earlier
+/// speech — Whisper treats the initial prompt as preceding transcript, so a
+/// labelled meta-line like "Vocabulary: ..." reads as foreign text and biases
+/// far less than the terms appearing plainly. The cap cuts at a term boundary
+/// so a truncated list never ends mid-name.
 fn build_initial_prompt(language: &str, translate: bool, dialect: &str, vocab: &str) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if language == "ar" && !translate {
         parts.push(dialect_prompt(dialect).to_string());
     }
-    // Custom vocabulary: split on commas / newlines / semicolons, trim, dedupe-ish,
-    // and present as a short phrase the decoder leans toward. Cap the length so a
-    // huge list can't crowd out the audio (Whisper's prompt window is limited).
-    let terms: Vec<&str> = vocab
-        .split(|c| c == ',' || c == '\n' || c == ';')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let terms = crate::text::vocab_terms(vocab);
     if !terms.is_empty() {
-        let mut list = terms.join(", ");
-        if list.chars().count() > 320 {
-            list = list.chars().take(320).collect();
+        let mut list = String::new();
+        for t in terms {
+            let sep = if list.is_empty() { 0 } else { 2 };
+            if list.chars().count() + sep + t.chars().count() > 400 {
+                break;
+            }
+            if !list.is_empty() {
+                list.push_str(", ");
+            }
+            list.push_str(t);
         }
-        parts.push(format!("Vocabulary: {list}."));
+        list.push('.');
+        parts.push(list);
     }
     if parts.is_empty() {
         None
@@ -389,21 +474,34 @@ mod tests {
 
     #[test]
     fn initial_prompt_combines_dialect_and_vocab() {
-        // English with vocab → only the vocabulary line.
+        // English with vocab → only the bare terms (no meta label).
         let p = super::build_initial_prompt("en", false, "auto", "EchoFlow, Mnour, Tauri").unwrap();
-        assert!(p.contains("Vocabulary:"));
         assert!(p.contains("EchoFlow") && p.contains("Tauri"));
+        assert!(!p.contains("Vocabulary"), "no meta label in the prompt");
         assert!(!p.contains("محادثة"), "no Arabic prime for English");
 
-        // Arabic with vocab → both the colloquial prime and the vocabulary.
+        // Arabic with vocab → both the colloquial prime and the terms.
         let p = super::build_initial_prompt("ar", false, "egyptian", "القاهرة").unwrap();
         assert!(p.contains("المصرية"), "Arabic prime present");
-        assert!(p.contains("Vocabulary:") && p.contains("القاهرة"));
+        assert!(p.contains("القاهرة"));
 
         // Nothing to bias → None (so we never set an empty prompt).
         assert!(super::build_initial_prompt("en", false, "auto", "   ").is_none());
         // Translate task skips the Arabic prime even for ar.
         assert!(super::build_initial_prompt("ar", true, "auto", "").is_none());
+    }
+
+    #[test]
+    fn initial_prompt_caps_at_term_boundary() {
+        // A long list truncates between terms, never mid-name.
+        let vocab: Vec<String> = (0..100).map(|i| format!("TermNumber{i:02}Xyz")).collect();
+        let p = super::build_initial_prompt("en", false, "auto", &vocab.join(", ")).unwrap();
+        assert!(p.chars().count() <= 401, "prompt stays capped");
+        let body = p.trim_end_matches('.');
+        assert!(
+            body.split(", ").all(|t| t.starts_with("TermNumber") && t.ends_with("Xyz")),
+            "every kept term is intact: {body}"
+        );
     }
 
     #[test]
@@ -441,6 +539,24 @@ mod tests {
     }
 
     #[test]
+    fn cancel_aborts_decode() {
+        let model = dev_model();
+        let wav = sample_wav();
+        if !model.exists() || !wav.exists() {
+            eprintln!("skipping: model or sample wav not present");
+            return;
+        }
+        let engine = WhisperEngine::load(&model, "small").expect("load model");
+        let audio = read_wav_16k_mono(&wav);
+        // Cancel already requested: the decode must abort, not produce text.
+        let cancel = Arc::new(AtomicBool::new(true));
+        let err = engine
+            .transcribe(&audio, "en", false, "auto", "", &cancel)
+            .expect_err("pre-canceled decode must fail");
+        assert!(err.to_string().contains("canceled"), "got: {err}");
+    }
+
+    #[test]
     fn transcribes_english_sample() {
         let model = dev_model();
         let wav = sample_wav();
@@ -450,7 +566,8 @@ mod tests {
         }
         let engine = WhisperEngine::load(&model, "small").expect("load model");
         let audio = read_wav_16k_mono(&wav);
-        let t = engine.transcribe(&audio, "auto", false, "auto", "").expect("transcribe");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let t = engine.transcribe(&audio, "auto", false, "auto", "", &cancel).expect("transcribe");
         eprintln!("detected lang = {}, text = {}", t.language, t.full_text);
         assert!(!t.full_text.trim().is_empty(), "expected non-empty text");
         assert_eq!(t.language, "en", "jfk sample should detect as English");

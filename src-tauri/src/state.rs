@@ -26,6 +26,10 @@ pub struct AppState {
     /// another job behind the engine lock — the "double-tap posts twice / 10-15s
     /// freeze" bug. Set via `begin_transcribing`, cleared by the returned guard.
     transcribing: AtomicBool,
+    /// Set by the user's cancel button to abort an in-flight transcription: the
+    /// whisper abort callback polls it and bails out of the decode. Reset every
+    /// time a new transcription begins.
+    cancel_transcribe: Arc<AtomicBool>,
     /// Last time a toggle-mode hotkey press was acted on, to debounce double-taps.
     last_toggle: Mutex<Instant>,
     /// Names of models currently downloading, to prevent duplicate downloads.
@@ -61,6 +65,7 @@ impl AppState {
             level: Arc::new(AtomicU32::new(0)),
             recording: Mutex::new(None),
             transcribing: AtomicBool::new(false),
+            cancel_transcribe: Arc::new(AtomicBool::new(false)),
             last_toggle: Mutex::new(Instant::now()),
             downloads: Mutex::new(HashSet::new()),
             engine: Mutex::new(None),
@@ -90,10 +95,22 @@ impl AppState {
     }
 
     /// Mark transcription as started. The returned guard clears the flag on drop
-    /// (panic-safe), so `is_busy` can never get permanently stuck.
+    /// (panic-safe), so `is_busy` can never get permanently stuck. Also clears
+    /// any stale cancel request from a previous clip.
     pub fn begin_transcribing(&self) -> TranscribeGuard<'_> {
+        self.cancel_transcribe.store(false, Ordering::SeqCst);
         self.transcribing.store(true, Ordering::SeqCst);
         TranscribeGuard(&self.transcribing)
+    }
+
+    /// Request that the in-flight transcription abort (the cancel button).
+    pub fn request_cancel_transcribe(&self) {
+        self.cancel_transcribe.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the last/current transcription was canceled by the user.
+    pub fn transcribe_canceled(&self) -> bool {
+        self.cancel_transcribe.load(Ordering::SeqCst)
     }
 
     /// Debounce toggle-mode hotkey presses: allow one only if the last accepted
@@ -178,7 +195,7 @@ impl AppState {
         let result = guard
             .as_ref()
             .expect("engine loaded above")
-            .transcribe(audio_16k, language_mode, translate, dialect, vocab);
+            .transcribe(audio_16k, language_mode, translate, dialect, vocab, &self.cancel_transcribe);
         self.touch();
         // Leave a memory trail in the log so a slow leak over hours of heavy use
         // is visible after the fact (the "becomes unresponsive after ~2h" report).

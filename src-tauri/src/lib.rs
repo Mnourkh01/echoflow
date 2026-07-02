@@ -248,6 +248,21 @@ pub fn run() {
             let retention = settings.retention_days;
 
             app.manage(AppState::new(paths, db, settings));
+
+            // "Always run as administrator": relaunch elevated before any UI
+            // work. On success the elevated instance takes over and this one
+            // exits; if the UAC prompt is declined we just continue unelevated.
+            #[cfg(windows)]
+            {
+                let want_admin = app.state::<AppState>().settings.read().always_admin;
+                if want_admin && !commands::is_elevated() {
+                    match commands::relaunch_as_admin(app.handle().clone()) {
+                        Ok(()) => return Ok(()), // elevated instance starting; we exit
+                        Err(e) => log::warn!("always-admin relaunch skipped: {e}"),
+                    }
+                }
+            }
+
             let _ = commands::register_shortcuts(app.handle(), &hotkey, &toggle_hotkey);
 
             // Enforce the retention policy on launch: drop old recordings + audio
@@ -340,6 +355,7 @@ pub fn run() {
             commands::start_recording,
             commands::stop_recording,
             commands::cancel_recording,
+            commands::cancel_transcription,
             commands::list_recordings,
             commands::get_recording,
             commands::delete_recording,
@@ -395,8 +411,11 @@ fn stop_and_notify(app: &tauri::AppHandle) {
                 let _ = app2.emit("dictation-result", res);
             }
             Ok(None) => {
-                log::info!("hotkey: discarded (no speech)");
-                let _ = app2.emit("rec-canceled", "no-speech");
+                // Quiet discard: either nothing was said, or the user hit cancel
+                // mid-transcription. The reason drives which notice the UI shows.
+                let reason = if state.transcribe_canceled() { "user" } else { "no-speech" };
+                log::info!("hotkey: discarded ({reason})");
+                let _ = app2.emit("rec-canceled", reason);
             }
             Err(e) => {
                 log::warn!("hotkey: transcribe failed: {e}");

@@ -1,4 +1,4 @@
-import { Mic, Square, Loader2 } from "lucide-react";
+import { Mic, Square, Loader2, X } from "lucide-react";
 import LevelMeter from "./LevelMeter";
 import RobotMascot from "./RobotMascot";
 import { useT } from "../lib/i18n";
@@ -10,10 +10,13 @@ interface Props {
   level: number;
   elapsedMs: number;
   onToggle: () => void;
+  /** Discard the take: while recording drops the clip; while transcribing
+   *  aborts the decode. Nothing is saved or typed. */
+  onCancel?: () => void;
   /** Record-button look. "orb" = the glass sphere; "robot" = the mascot. */
   variant?: "orb" | "robot";
-  /** Transient mood for the robot (result / error / update / mode-switch);
-   *  ignored by the orb. */
+  /** Transient mood (result / error / update / mode-switch). The robot acts it
+   *  out; the orb flashes it (red shake on error, a pop on result). */
   flash?: "happy" | "sad" | "update" | "switch" | null;
 }
 
@@ -24,11 +27,15 @@ function fmt(ms: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export default function RecordControl({ state, level, elapsedMs, onToggle, variant = "orb", flash }: Props) {
+export default function RecordControl({ state, level, elapsedMs, onToggle, onCancel, variant = "orb", flash }: Props) {
   const { t } = useT();
   const recording = state === "recording";
   const busy = state === "transcribing";
   const robot = variant === "robot";
+  // Orb-mood feedback so the plain sphere isn't mute about outcomes: errors
+  // flash it red with a shake, results/switches give a quick spring pop.
+  const orbSad = !robot && flash === "sad";
+  const orbPop = !robot && (flash === "happy" || flash === "update" || flash === "switch");
 
   // The orb is a glass sphere; the light INSIDE it is the voice. The light fills
   // most of the glass even at rest, so it reads as a glowing sphere (not a dark
@@ -50,7 +57,13 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, varia
           label={recording ? t("stop_recording") : t("start_recording")}
         />
       ) : (
-      <div className="relative grid h-28 w-28 place-items-center">
+      <div
+        className={`relative grid h-28 w-28 place-items-center ${orbSad ? "rb-shake" : ""}`}
+        style={{
+          transform: `scale(${orbPop ? 1.08 : 1})`,
+          transition: "transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1)",
+        }}
+      >
         {/* Ambient aurora halo — bleeds the orb's glow into the surrounding space
             so it reads as a light source, not a disc dropped on black. */}
         <span
@@ -59,8 +72,9 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, varia
           }`}
           style={{
             opacity: haloOpacity,
-            backgroundImage:
-              "radial-gradient(circle at 50% 45%, rgb(var(--aurora-teal) / 0.65) 0%, rgb(var(--aurora-iris) / 0.5) 45%, rgb(var(--aurora-violet) / 0) 72%)",
+            backgroundImage: orbSad
+              ? "radial-gradient(circle at 50% 45%, rgb(239 68 68 / 0.6) 0%, rgb(190 30 60 / 0.4) 45%, rgb(190 30 60 / 0) 72%)"
+              : "radial-gradient(circle at 50% 45%, rgb(var(--aurora-teal) / 0.65) 0%, rgb(var(--aurora-iris) / 0.5) 45%, rgb(var(--aurora-violet) / 0) 72%)",
           }}
         />
         {/* Sonar rings while recording — the "alive / listening" cue, in aurora. */}
@@ -90,8 +104,9 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, varia
             style={{
               opacity: lightOpacity,
               transform: `scale(${lightScale})`,
-              backgroundImage:
-                "radial-gradient(circle at 50% 30%, rgb(var(--aurora-teal)) 0%, rgb(var(--aurora-iris)) 48%, rgb(var(--aurora-violet)) 100%)",
+              backgroundImage: orbSad
+                ? "radial-gradient(circle at 50% 30%, rgb(248 113 113) 0%, rgb(239 68 68) 48%, rgb(153 27 27) 100%)"
+                : "radial-gradient(circle at 50% 30%, rgb(var(--aurora-teal)) 0%, rgb(var(--aurora-iris)) 48%, rgb(var(--aurora-violet)) 100%)",
             }}
           />
           {/* Glass shell: a thin bright rim over the light (no dark bezel). */}
@@ -127,7 +142,7 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, varia
         </div>
       )}
 
-      <div className="text-sm text-ink-400">
+      <div className="flex items-center gap-3 text-sm text-ink-400">
         {busy ? (
           t("transcribing")
         ) : recording ? (
@@ -140,6 +155,19 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, varia
             </kbd>{" "}
             {t("talk_hint_post")}
           </span>
+        )}
+        {/* Discard the take (recording or mid-transcription). Esc does the same. */}
+        {(recording || busy) && onCancel && (
+          <button
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-xs text-ink-300 transition hover:border-red-400/40 hover:text-red-300"
+          >
+            <X className="h-3.5 w-3.5" />
+            {t("cancel_recording")}
+            <kbd className="rounded border border-white/10 bg-white/[0.06] px-1 font-mono text-[10px] text-ink-400">
+              Esc
+            </kbd>
+          </button>
         )}
       </div>
     </div>

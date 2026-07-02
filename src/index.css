@@ -240,6 +240,7 @@ html.overlay #root {
 .jv-rot { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin 26s linear infinite; }
 .jv-rot-mid { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin-rev 15s linear infinite; }
 .jv-rot-fast { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin 8s linear infinite; }
+.jv-rot-rev { transform-box: view-box; transform-origin: 120px 120px; animation: orb-spin-rev 21s linear infinite; }
 .jv-globe { transform-box: view-box; transform-origin: 120px 120px; animation: jv-globe 8s ease-in-out infinite; }
 .jv-core { transform-box: fill-box; transform-origin: center; animation: orb-core 2.6s ease-in-out infinite; }
 .jv-flicker { animation: jv-flicker 3.5s ease-in-out infinite; }

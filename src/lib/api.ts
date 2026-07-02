@@ -79,6 +79,7 @@ export interface Settings {
   api_model: string;
   api_base_url: string;
   ui_lang: "en" | "ar";
+  always_admin: boolean; // relaunch elevated on every start (UAC prompt at launch)
   theme: string;
   retention_days: number; // auto-delete recordings older than this; 0 = keep all
   idle_unload_minutes: number; // free model from RAM after idle; 0 = keep loaded
@@ -121,6 +122,7 @@ export const api = {
     invoke<void>("start_recording", { device }),
   stopRecording: () => invoke<RecordingResult | null>("stop_recording"),
   cancelRecording: () => invoke<void>("cancel_recording"),
+  cancelTranscription: () => invoke<void>("cancel_transcription"),
   getLevel: () => invoke<number>("get_level"),
   isRecording: () => invoke<boolean>("is_recording"),
   listRecordings: (query: string | null) =>

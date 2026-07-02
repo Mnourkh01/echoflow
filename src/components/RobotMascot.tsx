@@ -190,6 +190,13 @@ export default function RobotMascot({ state, level, onToggle, flash, label }: Pr
               <stop offset="70%" stopColor={col2} stopOpacity="0.10" />
               <stop offset="100%" stopColor={col2} stopOpacity="0" />
             </radialGradient>
+            {/* Limb shading: light from upper-left, darkened rim — turns the flat
+                wireframe disc into a ball without any SVG filter cost. */}
+            <radialGradient id="jvShade" cx="38%" cy="32%" r="78%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0.07" />
+              <stop offset="55%" stopColor="#000000" stopOpacity="0" />
+              <stop offset="100%" stopColor="#000000" stopOpacity="0.5" />
+            </radialGradient>
           </defs>
 
           <g
@@ -204,11 +211,23 @@ export default function RobotMascot({ state, level, onToggle, flash, label }: Pr
             {/* inner haze */}
             <circle cx={C} cy={C} r="86" fill="url(#jvHaze)" />
 
-            {/* radial data-streak corona (slow spin) */}
-            <g className="jv-rot jv-flicker" stroke="currentColor" strokeLinecap="round">
-              {STREAKS.map((s, i) => (
-                <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} strokeWidth={s.w} opacity={s.op} />
-              ))}
+            {/* radial data-streak corona (slow spin). The outer wrapper carries
+                the live-voice reaction (breathes wider + brighter as you speak)
+                so it never fights the inner group's rotation/flicker animation. */}
+            <g
+              style={{
+                transformBox: "view-box",
+                transformOrigin: "120px 120px",
+                transform: `scale(${1 + (recording ? lvl * 0.13 : 0)})`,
+                opacity: 0.5 + energy * 0.5,
+                transition: "opacity 0.3s ease, transform 0.1s linear",
+              }}
+            >
+              <g className="jv-rot jv-flicker" stroke="currentColor" strokeLinecap="round">
+                {STREAKS.map((s, i) => (
+                  <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} strokeWidth={s.w} opacity={s.op} />
+                ))}
+              </g>
             </g>
 
             {/* wireframe globe: latitude ellipses + a spinning longitude set */}
@@ -222,6 +241,8 @@ export default function RobotMascot({ state, level, onToggle, flash, label }: Pr
               <ellipse cx={C} cy={C} rx="72" ry="30" />
               <ellipse cx={C} cy={C} rx="72" ry="55" />
             </g>
+            {/* limb shading over the wireframe: reads as a lit sphere, not a disc */}
+            <circle cx={C} cy={C} r="72" fill="url(#jvShade)" opacity="0.6" />
 
             {/* orbiting rings (the JARVIS swoosh arcs) */}
             <g className="jv-rot-mid">
@@ -229,6 +250,10 @@ export default function RobotMascot({ state, level, onToggle, flash, label }: Pr
             </g>
             <g className="jv-rot-fast">
               <ellipse cx={C} cy={C} rx="84" ry="26" fill="none" stroke={col2} strokeWidth="1.6" opacity="0.6" transform={`rotate(-38 ${C} ${C})`} strokeDasharray="6 10" />
+            </g>
+            {/* faint third orbit, counter-rotating: adds parallax depth at rest */}
+            <g className="jv-rot-rev">
+              <ellipse cx={C} cy={C} rx="93" ry="34" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.32" transform={`rotate(64 ${C} ${C})`} strokeDasharray="2 13" />
             </g>
 
             {/* glinting nodes */}
@@ -243,8 +268,9 @@ export default function RobotMascot({ state, level, onToggle, flash, label }: Pr
               <circle className="orb-ring" cx={C} cy={C} r="80" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="14 240" style={{ transformOrigin: "120px 120px" }} />
             )}
 
-            {/* hot core */}
+            {/* hot core: wide bloom + tight bloom + white-hot pinpoint */}
             <circle className="jv-core" cx={C} cy={C} r="30" fill="url(#jvCore)" />
+            <circle className="jv-core" cx={C} cy={C} r="16" fill="url(#jvCore)" opacity="0.85" />
             <circle className="jv-core" cx={C} cy={C} r="7" fill="#ffffff" opacity="0.9" />
           </g>
         </svg>
