@@ -61,6 +61,40 @@ fn assets_present() -> bool {
     true
 }
 
+/// Model evaluation: transcribe jfk.wav with an arbitrary model and print the
+/// wall time + output, so candidate models can be compared on this machine
+/// before shipping one as the default. Run from `src-tauri/`:
+///
+///   BENCH_MODEL_PATH=path/to/ggml-x.bin cargo test --release bench_model -- --ignored --nocapture
+#[test]
+#[ignore]
+fn bench_model() {
+    let Ok(path) = std::env::var("BENCH_MODEL_PATH") else {
+        eprintln!("skipping: set BENCH_MODEL_PATH to a ggml model file");
+        return;
+    };
+    if !sample_path().exists() {
+        eprintln!("skipping: models/jfk.wav not present");
+        return;
+    }
+    let audio = jfk_16k();
+    let secs = audio.len() as f32 / audio::TARGET_RATE as f32;
+    let t = Instant::now();
+    let engine = WhisperEngine::load(PathBuf::from(&path).as_path(), "bench").expect("load model");
+    let load_s = t.elapsed().as_secs_f64();
+    let t = Instant::now();
+    let tr = engine
+        .transcribe(&audio, "en", false, "auto", "", &Arc::new(AtomicBool::new(false)))
+        .expect("transcribe");
+    let dec = t.elapsed().as_secs_f64();
+    eprintln!(
+        "# model={path}\n# load={load_s:.1}s decode={dec:.1}s clip={secs:.1}s ratio={:.2}x rss={:.0} MB\n# text: {}",
+        dec / secs as f64,
+        rss_mb(),
+        tr.full_text
+    );
+}
+
 /// Crash candidate #1: a slow per-clip leak. Reuses one engine (production keeps
 /// the model cached in AppState) and calls `transcribe` in a loop, which creates
 /// a fresh whisper state each time — exactly the production path. A rising

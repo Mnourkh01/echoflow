@@ -67,8 +67,20 @@ already installed on this machine.
 - Global PTT hotkey defaults to `CommandOrControl+Shift+Space`; in-app hold **Space** also works.
 - Models resolve from app-data `models/`, then exe-dir `models/`, then the source
   `src-tauri/models/` (dev). Filenames are `ggml-<name>.bin`.
+- `large-v3-turbo-q5_0` (547 MB quantized) is the default quality model: near
+  large-v3-turbo accuracy, and on the Vulkan GPU build an 11 s clip decodes in
+  ~0.8 s (vs 15 s CPU). `small` remains the light fallback. Benchmark any
+  candidate with
+  `BENCH_MODEL_PATH=... cargo test --release bench_model -- --ignored --nocapture`.
+- Whisper threads cap at 8: measured on the 12700H hybrid CPU, 10 threads is
+  the plateau and 16 is 2x SLOWER (E-core spin contention). `ECHOFLOW_THREADS`
+  overrides for experiments.
 - CSP is configured in `tauri.conf.json` (separate dev/prod policies).
-- GPU is off (CPU build). GPU is a Phase 3 cargo feature (Vulkan/CUDA).
+- Release builds ship with `--features gpu-vulkan` (whisper.cpp Vulkan on the
+  RTX 3050; ~19x faster than CPU on large models, auto CPU fallback if no
+  Vulkan device). Building it needs `VULKAN_SDK=C:\VulkanSDK\mini` + glslc on
+  PATH (a hand-assembled mini SDK; see release.ps1 and the build notes memory).
+  Plain `cargo build`/`cargo test` stay CPU and need no Vulkan SDK.
 - Auto language detect is constrained to the settings-offered set (`AUTO_LANGS`
   in `whisper.rs`) so dialectal Arabic can't misdetect as Farsi/Urdu.
 - Custom vocabulary = decoder bias (initial prompt) + deterministic fuzzy

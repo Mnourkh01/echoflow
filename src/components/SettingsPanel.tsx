@@ -10,12 +10,21 @@ import { previewSound, SOUND_PACKS } from "../lib/sound";
 import { PALETTES, applyAccent } from "../lib/theme";
 
 // Model order + approximate download sizes (MB) shown before a model is present.
-const KNOWN_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"] as const;
+const KNOWN_MODELS = [
+  "tiny",
+  "base",
+  "small",
+  "medium",
+  "large-v3-turbo-q5_0",
+  "large-v3-turbo",
+  "large-v3",
+] as const;
 const MODEL_MB: Record<string, number> = {
   tiny: 74,
   base: 141,
   small: 465,
   medium: 1462,
+  "large-v3-turbo-q5_0": 547,
   "large-v3-turbo": 1549,
   "large-v3": 2952,
 };

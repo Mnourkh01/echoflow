@@ -80,10 +80,20 @@ impl WhisperEngine {
         vocab: &str,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .min(8) as i32;
+        // Thread count: measured on the 12700H (6P+8E hybrid), ggml gets SLOWER
+        // past ~8 threads (E-cores + spin sync stall the P-cores: 8 threads
+        // 15s, 16 threads 34s on the same clip). min(8) is the sweet spot for
+        // hybrid CPUs; ECHOFLOW_THREADS overrides for benching / odd machines.
+        let threads = std::env::var("ECHOFLOW_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .min(8)
+            })
+            .clamp(1, 32) as i32;
 
         // Settle on the language up front. A forced mode wins; otherwise run a
         // cheap detect pass on the mel so we know the language (and its
@@ -194,6 +204,10 @@ impl WhisperEngine {
         // which is common with strong accents.
         params.set_temperature(0.0);
         params.set_temperature_inc(0.2);
+        // Suppress non-speech token strings (♪, bracketed sound-event tags...).
+        // Dictation never wants them, and on weak audio they are exactly the
+        // tokens hallucinated decodes reach for.
+        params.set_suppress_nst(true);
 
         params.set_language(Some(language));
         params.set_translate(translate);

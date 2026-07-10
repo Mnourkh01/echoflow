@@ -12,7 +12,12 @@
 
 const FRAME: usize = 480; // 30 ms @ 16 kHz
 const HANGOVER: usize = 8; // ~240 ms of silence kept around speech (natural pauses)
-const MAX_GAP: usize = 16; // internal silence longer than this collapses to this many frames
+// Internal silence longer than this collapses to this many frames. Generous
+// (~1.5 s) on purpose: thinking pauses inside a dictation stay intact — every
+// splice is a discontinuity Whisper can mis-decode across, so we only collapse
+// gaps long enough to invite silence hallucinations, and the cut then lands
+// deep inside near-silence where the seam is inaudible.
+const MAX_GAP: usize = 50;
 const PAD: usize = 5; // ~150 ms lead/tail padding so words aren't clipped
 
 pub(crate) fn frame_rms(frame: &[f32]) -> f32 {
@@ -67,9 +72,12 @@ pub fn trim_to_speech(samples: &[f32]) -> Vec<f32> {
 
     // Threshold sits above the noise floor but well below the peak, so quiet
     // speech still counts as voiced. The three terms guard each failure mode:
-    // a noisy floor, a quiet clip, and a near-silent floor.
+    // a noisy floor, a quiet clip, and a near-silent floor. The peak term is
+    // low (8%) because one loud plosive must never push soft word endings and
+    // trailing syllables below the line — losing spoken words is a far worse
+    // failure than keeping a little extra silence.
     let floor = percentile(&rms, 0.2);
-    let thresh = (floor * 2.5).max(peak * 0.12).max(3e-3);
+    let thresh = (floor * 2.5).max(peak * 0.08).max(3e-3);
 
     let voiced = dilate(&rms.iter().map(|&r| r >= thresh).collect::<Vec<_>>(), HANGOVER);
     let first = match voiced.iter().position(|&v| v) {

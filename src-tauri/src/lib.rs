@@ -125,9 +125,24 @@ fn apply_output_mode(app: &tauri::AppHandle, mode: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init()
-        .ok();
+    // Log to a FILE in app-data, not just stderr: the release exe is a Windows
+    // GUI app with no console, so stderr logging is invisible exactly where we
+    // need it most (diagnosing issues on the user's machine). Truncated on each
+    // launch so it never grows unbounded; stderr still works for dev runs.
+    let mut builder =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    let data_dir = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let log_path = data_dir.join("com.voiceapp.beta").join("echoflow.log");
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(file) = std::fs::File::create(&log_path) {
+        builder.target(env_logger::Target::Pipe(Box::new(file)));
+    }
+    builder.try_init().ok();
+    log::info!("EchoFlow starting (v{})", env!("CARGO_PKG_VERSION"));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

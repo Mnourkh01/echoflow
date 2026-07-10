@@ -339,8 +339,13 @@ pub fn apply_custom_vocab(text: &str, vocab: &str) -> String {
 
         let mut i = 0;
         while i < words.len() {
-            let mut matched = false;
-            for &size in sizes.iter().rev() {
+            // Evaluate every window size at this position and keep the CLOSEST
+            // match (ties go to the smaller window). Trying sizes largest-first
+            // with a fuzz budget would swallow an innocent neighbor word:
+            // "EchoFlow is" (distance 2 to "echoflow") must lose to the exact
+            // "EchoFlow" (distance 0) right under it.
+            let mut best: Option<(usize, usize)> = None; // (distance, size)
+            for &size in sizes.iter() {
                 if i + size > words.len() {
                     continue;
                 }
@@ -350,19 +355,30 @@ pub fn apply_custom_vocab(text: &str, vocab: &str) -> String {
                     continue;
                 }
                 let joined: String = words[i..i + size].iter().map(|w| w.lower.as_str()).collect();
-                // Same-length windows may fuzz; merged/split windows must match
-                // the joined form exactly (fuzz there causes false positives).
-                let budget = if size == n { cap } else { 0 };
-                if levenshtein(&joined, &joined_term, budget) <= budget {
-                    if &text[start..end] != term {
-                        repl.push((start, end, term));
-                    }
-                    i += size;
-                    matched = true;
-                    break;
+                // Same-length windows may fuzz. Merged/split windows (the term
+                // heard as one-more/one-fewer words) get the budget only for
+                // long terms (8+ chars): Whisper writing "Folowise" as
+                // "follow wise" needs 2 edits AND a merge, and long rare names
+                // are safe to fuzz — short ones must still match exactly or
+                // common word pairs would get hijacked.
+                let budget = if size == n || joined_term.chars().count() >= 8 {
+                    cap
+                } else {
+                    0
+                };
+                let d = levenshtein(&joined, &joined_term, budget);
+                if d <= budget && best.map_or(true, |(bd, _)| d < bd) {
+                    best = Some((d, size));
                 }
             }
-            if !matched {
+            if let Some((_, size)) = best {
+                let start = words[i].start;
+                let end = words[i + size - 1].end;
+                if &text[start..end] != term {
+                    repl.push((start, end, term));
+                }
+                i += size;
+            } else {
                 i += 1;
             }
         }
@@ -455,6 +471,17 @@ mod tests {
             apply_custom_vocab("launch echo flow now", "EchoFlow, Tauri"),
             "launch EchoFlow now"
         );
+    }
+
+    #[test]
+    fn vocab_fuzzy_merge_on_long_terms() {
+        // Long term (8+ chars) misheard AND split: fuzz applies across the merge.
+        assert_eq!(
+            apply_custom_vocab("open follow wise now", "Folowise"),
+            "open Folowise now"
+        );
+        // Short terms still require an exact joined match — no hijacking.
+        assert_eq!(apply_custom_vocab("go for it", "Fort"), "go for it");
     }
 
     #[test]

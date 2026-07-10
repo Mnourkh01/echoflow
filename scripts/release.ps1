@@ -34,8 +34,14 @@ $libclangPip = "C:\Users\mnour\AppData\Roaming\Python\Python314\site-packages\cl
 $env:LIBCLANG_PATH = if (Test-Path "$libclangTools\libclang.dll") { $libclangTools } else { $libclangPip }
 $env:CMAKE_GENERATOR = "Visual Studio 16 2019"
 $env:CMAKE_GENERATOR_PLATFORM = "x64"
+# Vulkan GPU build (whisper.cpp ggml-vulkan). The "mini SDK" is assembled by
+# hand (Khronos headers + import lib generated from System32\vulkan-1.dll +
+# glslc from Google's shaderc artifacts) because the LunarG installer refuses
+# to run unattended without elevation. See the windows-native-build notes.
+$env:VULKAN_SDK = "C:\VulkanSDK\mini"
+$env:Path = "$env:VULKAN_SDK\Bin;" + $env:Path
 Set-Location $root
-npm run tauri build
+npm run tauri build -- --features gpu-vulkan
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
 # 3. Locate the installer + its signature.

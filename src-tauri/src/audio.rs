@@ -231,14 +231,51 @@ pub fn resample_to_16k(mono: &[f32], from_rate: u32) -> Vec<f32> {
     resample(mono, from_rate, TARGET_RATE)
 }
 
+/// One-pole high-pass at `cutoff_hz`. Removes the low-frequency rumble and hum
+/// (desk thumps, fans, AC, electrical hum) that sits below any speech content —
+/// it costs nothing, cleans the signal for RNNoise/Whisper, and stops that
+/// energy from dominating the loudness normalization and the VAD's noise floor.
+fn high_pass(samples: &mut [f32], sample_rate: u32, cutoff_hz: f32) {
+    if samples.is_empty() || sample_rate == 0 {
+        return;
+    }
+    let rc = 1.0 / (2.0 * std::f32::consts::PI * cutoff_hz);
+    let dt = 1.0 / sample_rate as f32;
+    let a = rc / (rc + dt);
+    let mut prev_x = samples[0];
+    let mut prev_y = 0.0f32;
+    for s in samples.iter_mut() {
+        let x = *s;
+        let y = a * (prev_y + x - prev_x);
+        prev_x = x;
+        prev_y = y;
+        *s = y;
+    }
+}
+
 /// RNNoise denoise. Expects 48 kHz mono; processes 480-sample (10 ms) frames.
 /// RNNoise works in the i16 amplitude range, so scale up before and back after.
+///
+/// RNNoise's noise estimate needs a few frames to converge; without a warmup it
+/// audibly gates/mangles the first word of the clip. We prime the state on a
+/// dozen frames of the clip's own opening (discarded), so the real first frames
+/// are processed by an already-converged model.
 fn denoise_48k(mono48: &[f32]) -> Vec<f32> {
     use nnnoiseless::DenoiseState;
     let frame = DenoiseState::FRAME_SIZE;
     let mut st = DenoiseState::new();
     let mut in_buf = vec![0f32; frame];
     let mut out_buf = vec![0f32; frame];
+
+    // Warmup: run the first ~120 ms through the state and throw the output away.
+    let warm = mono48.len().min(frame * 12);
+    for chunk in mono48[..warm].chunks(frame) {
+        for (i, slot) in in_buf.iter_mut().enumerate() {
+            *slot = chunk.get(i).copied().unwrap_or(0.0) * 32768.0;
+        }
+        st.process_frame(&mut out_buf, &in_buf);
+    }
+
     let mut out = Vec::with_capacity(mono48.len());
     for chunk in mono48.chunks(frame) {
         for (i, slot) in in_buf.iter_mut().enumerate() {
@@ -278,12 +315,20 @@ fn normalize_loudness(samples: &mut [f32], target_rms: f32, max_gain: f32) {
     }
 }
 
-/// Full pipeline: raw interleaved capture -> 16 kHz mono, gain-normalized, and
-/// padded to at least one second so Whisper's mel front end has enough to work
-/// with. When `denoise` is on, RNNoise cleans background noise first (at 48 kHz,
-/// the rate it operates on) so speech stays clear through a noisy mic.
+/// Full pipeline: raw interleaved capture -> 16 kHz mono, cleaned, trimmed to
+/// speech, gain-normalized, and padded to at least one second so Whisper's mel
+/// front end has enough to work with.
+///
+/// Order matters and is deliberate:
+///   1. high-pass  — kill rumble/hum first so it never pollutes anything below
+///   2. denoise    — RNNoise (when on) works best on the full-rate, HPF'd signal
+///   3. resample   — down to Whisper's 16 kHz
+///   4. VAD trim   — cut lead/tail silence so Whisper decodes only speech
+///   5. normalize  — gain computed on the speech-only clip, so long silences can
+///                   no longer skew the RMS and over/under-boost the voice
 pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> {
-    let mono = to_mono(&captured.samples, captured.channels);
+    let mut mono = to_mono(&captured.samples, captured.channels);
+    high_pass(&mut mono, captured.sample_rate, 80.0);
     let mut out = if denoise {
         let m48 = resample(&mono, captured.sample_rate, 48_000);
         let clean = denoise_48k(&m48);
@@ -291,11 +336,11 @@ pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> 
     } else {
         resample_to_16k(&mono, captured.sample_rate)
     };
-    normalize_loudness(&mut out, 0.12, 120.0);
     // VAD: drop silence so Whisper decodes only speech — faster, and far less
     // likely to hallucinate words during quiet stretches. Conservative; returns
     // the clip unchanged if it can't confidently find speech.
     out = crate::vad::trim_to_speech(&out);
+    normalize_loudness(&mut out, 0.12, 120.0);
     let min_len = TARGET_RATE as usize;
     if out.len() < min_len {
         out.resize(min_len, 0.0);

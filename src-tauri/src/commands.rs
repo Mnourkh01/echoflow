@@ -21,7 +21,15 @@ use crate::models::{
 use crate::paths::AppPaths;
 use crate::state::AppState;
 
-const KNOWN_MODELS: [&str; 6] = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"];
+const KNOWN_MODELS: [&str; 7] = [
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3-turbo-q5_0",
+    "large-v3-turbo",
+    "large-v3",
+];
 
 /// Below this raw RMS the clip is treated as silence (a mis-click) and discarded.
 /// Kept deliberately low so whispered / very quiet speech still gets through;
@@ -1130,6 +1138,7 @@ fn approx_model_size(name: &str) -> u64 {
         "base" => 147_951_465,
         "small" => 487_601_967,
         "medium" => 1_533_763_059,
+        "large-v3-turbo-q5_0" => 574_041_195,
         "large-v3-turbo" => 1_624_555_275,
         "large-v3" => 3_095_033_483,
         _ => 0,
