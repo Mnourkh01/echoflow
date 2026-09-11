@@ -486,6 +486,119 @@ mod tests {
         crate::audio::resample_to_16k(&mono, spec.sample_rate)
     }
 
+    /// Replay tools for real dictations (ignored; run by hand). The model path
+    /// comes from ECHOFLOW_MODEL, the clips from ECHOFLOW_REPLAY_FILES
+    /// (`;`-separated WAV paths). Example:
+    /// `cargo test --lib replay_language_probs -- --ignored --nocapture`
+    fn replay_setup() -> (WhisperEngine, Vec<PathBuf>) {
+        let model = PathBuf::from(std::env::var("ECHOFLOW_MODEL").expect("ECHOFLOW_MODEL"));
+        let files = std::env::var("ECHOFLOW_REPLAY_FILES").expect("ECHOFLOW_REPLAY_FILES");
+        let engine = WhisperEngine::load(&model, "replay").expect("load model");
+        let files = files.split(';').filter(|s| !s.trim().is_empty()).map(PathBuf::from).collect();
+        (engine, files)
+    }
+
+    fn word_overlap(reference: &str, hyp: &str) -> f32 {
+        let words = |s: &str| -> Vec<String> {
+            s.split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .map(|w| w.to_lowercase())
+                .collect()
+        };
+        let r = words(reference);
+        let h = words(hyp);
+        if r.is_empty() {
+            return 0.0;
+        }
+        let hit = r.iter().filter(|w| h.contains(w)).count();
+        hit as f32 / r.len() as f32
+    }
+
+    /// Whisper's own English vs Arabic probability for each clip, the number an
+    /// auto or "smart" language choice would be based on.
+    #[test]
+    #[ignore]
+    fn replay_language_probs() {
+        let (engine, files) = replay_setup();
+        let en = whisper_rs::get_lang_id("en").unwrap() as usize;
+        let ar = whisper_rs::get_lang_id("ar").unwrap() as usize;
+        for f in files {
+            let audio = read_wav_16k_mono(&f);
+            let mut state = engine.ctx.create_state().unwrap();
+            state.pcm_to_mel(&audio, 8).unwrap();
+            let (id, probs) = state.lang_detect(0, 8).unwrap();
+            eprintln!(
+                "{}  en={:.3}  ar={:.3}  winner={}",
+                f.file_name().unwrap().to_string_lossy(),
+                probs[en],
+                probs[ar],
+                whisper_rs::get_lang_str(id).unwrap_or("?")
+            );
+        }
+    }
+
+    /// Decode each clip in ECHOFLOW_REPLAY_LANG (default "en").
+    #[test]
+    #[ignore]
+    fn replay_decode() {
+        let (engine, files) = replay_setup();
+        let lang = std::env::var("ECHOFLOW_REPLAY_LANG").unwrap_or_else(|_| "en".into());
+        let cancel = Arc::new(AtomicBool::new(false));
+        for f in files {
+            let audio = read_wav_16k_mono(&f);
+            let t = engine.transcribe(&audio, &lang, false, "auto", "", &cancel).unwrap();
+            eprintln!("{} [{lang}] {}", f.file_name().unwrap().to_string_lossy(), t.full_text);
+        }
+    }
+
+    /// Quiet-speech sweep: each clip is turned down, padded with a second of
+    /// mic-floor noise on both sides, and run through the real capture pipeline
+    /// (`prepare_for_whisper`, with and without RNNoise) before decoding. The
+    /// saved clips are already VAD-trimmed and normalized, so they stand in for
+    /// clean speech; turning them down is quieter speech, not true whispering.
+    #[test]
+    #[ignore]
+    fn replay_quiet_speech() {
+        let (engine, files) = replay_setup();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut seed: u32 = 12345;
+        let mut noise = |amp: f32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * amp
+        };
+        for f in files {
+            let clean = read_wav_16k_mono(&f);
+            let reference = engine.transcribe(&clean, "en", false, "auto", "", &cancel).unwrap().full_text;
+            eprintln!("\n{}  reference: {reference}", f.file_name().unwrap().to_string_lossy());
+            for gain in [0.03f32, 0.01, 0.004] {
+                let mut samples: Vec<f32> = (0..16_000).map(|_| noise(0.0005)).collect();
+                samples.extend(clean.iter().map(|s| s * gain + noise(0.0005)));
+                samples.extend((0..16_000).map(|_| noise(0.0005)));
+                let raw_rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                let raw_peak = samples.iter().fold(0f32, |m, s| m.max(s.abs()));
+                for denoise in [false, true] {
+                    let captured = crate::audio::CapturedAudio {
+                        samples: samples.clone(),
+                        sample_rate: 16_000,
+                        channels: 1,
+                    };
+                    if !crate::audio::speech_present(&captured) {
+                        eprintln!("  gain {gain:<5} denoise {denoise:<5} raw_rms {raw_rms:.4} raw_peak {raw_peak:.4} DISCARDED as no speech");
+                        continue;
+                    }
+                    let prepared = crate::audio::prepare_for_whisper(&captured, denoise);
+                    let text = engine.transcribe(&prepared, "en", false, "auto", "", &cancel).unwrap().full_text;
+                    eprintln!(
+                        "  gain {gain:<5} denoise {denoise:<5} raw_rms {raw_rms:.4} raw_peak {raw_peak:.4} kept {:.1}s/{:.1}s overlap {:.2} | {text}",
+                        prepared.len() as f32 / 16_000.0,
+                        samples.len() as f32 / 16_000.0,
+                        word_overlap(&reference, &text)
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn initial_prompt_combines_dialect_and_vocab() {
         // English with vocab → only the bare terms (no meta label).
