@@ -1,7 +1,7 @@
 //! Shared application state managed by Tauri.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +10,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::audio::RecordingHandle;
 use crate::db::Db;
+use crate::enhance::CliSession;
 use crate::models::Settings;
 use crate::paths::AppPaths;
 use crate::whisper::{Transcript, WhisperEngine};
@@ -44,6 +45,13 @@ pub struct AppState {
     /// talking. `None` means "type wherever focus is now" (capture started from
     /// our own window, or not on Windows).
     target_window: Mutex<Option<isize>>,
+    /// The AI CLI pre-spawned when the current recording began, parked until
+    /// its transcript is ready (see `enhance::CliSession`).
+    warm_cli: Mutex<Option<CliSession>>,
+    /// Which recording may park a CLI in `warm_cli`; 0 means none may.
+    warm_slot: AtomicU64,
+    /// Source of `warm_slot` values, one per recording.
+    warm_seq: AtomicU64,
 }
 
 /// Clears the `transcribing` flag when dropped, so it can never get stuck on
@@ -71,7 +79,39 @@ impl AppState {
             engine: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
             target_window: Mutex::new(None),
+            warm_cli: Mutex::new(None),
+            warm_slot: AtomicU64::new(0),
+            warm_seq: AtomicU64::new(0),
         }
+    }
+
+    pub fn open_warm_slot(&self) {
+        let id = self.warm_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        self.warm_slot.store(id, Ordering::SeqCst);
+    }
+
+    /// The recording currently accepting a pre-spawned CLI, or 0 for none.
+    pub fn warm_slot(&self) -> u64 {
+        self.warm_slot.load(Ordering::SeqCst)
+    }
+
+    /// Park a pre-spawned CLI for recording `slot`. If that recording has
+    /// already ended or been canceled, the session is dropped, which stops it.
+    /// The check and the store share the lock `take_warm_cli` uses, so a
+    /// session can't slip in after its recording was closed.
+    pub fn park_warm_cli(&self, slot: u64, session: CliSession) {
+        let mut parked = self.warm_cli.lock();
+        if self.warm_slot.load(Ordering::SeqCst) == slot {
+            *parked = Some(session);
+        }
+    }
+
+    /// Close the slot and hand back the parked CLI, if any. Every path that ends
+    /// a recording calls this, so a pre-spawned process never outlives it.
+    pub fn take_warm_cli(&self) -> Option<CliSession> {
+        let mut parked = self.warm_cli.lock();
+        self.warm_slot.store(0, Ordering::SeqCst);
+        parked.take()
     }
 
     pub fn is_recording(&self) -> bool {

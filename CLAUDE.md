@@ -86,6 +86,16 @@ already installed on this machine.
 - Custom vocabulary = decoder bias (initial prompt) + deterministic fuzzy
   post-correction (`text::apply_custom_vocab`) + a preserve-spellings line in
   the enhance system prompts.
+- Enhance modes on the CLI engine pre-spawn `claude` the moment recording
+  starts (`commands::prepare_while_recording`), so its ~1.5 s startup overlaps
+  the speech; the result is taken from the stream-json `result` event, not
+  process exit. The parked process must use `--input-format stream-json`:
+  plain text stdin gives up after 3 s with no input. The child also gets
+  `MAX_THINKING_TOKENS=0` (Haiku 4.5 otherwise thinks ~4 s on a grammar fix
+  even at `--effort low`) and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+  (otherwise a hidden extra Haiku call rides along). Every path that ends a
+  recording must call `take_warm_cli()` so the process never lingers.
+  Recording start also reloads the Whisper model if the idle monitor freed it.
 - Esc / the X button cancels a take: while recording it discards the clip;
   while transcribing it aborts the decode via the whisper abort callback.
 - `?preview=mascot` on the Vite dev server shows a browser-only harness for the

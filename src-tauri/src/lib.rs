@@ -403,6 +403,7 @@ fn start_and_notify(app: &tauri::AppHandle) {
     match commands::begin_recording(state.inner(), None) {
         Ok(()) => {
             commands::spawn_silence_guard(app.clone());
+            commands::prepare_while_recording(app);
             let _ = app.emit("rec-started", ());
         }
         Err(e) => {

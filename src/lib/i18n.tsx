@@ -50,8 +50,8 @@ const STRINGS = {
     ar: "تحدث بأي لغة أو لهجة عربية واحصل على إنجليزية احترافية. يستخدم الـCLI المحلي.",
   },
   mode_polish_desc: {
-    en: "Turn rough speech into a clean English paragraph. Uses the local CLI.",
-    ar: "يحول الكلام العفوي إلى فقرة إنجليزية مرتبة. يستخدم الـCLI المحلي.",
+    en: "Fixes grammar and wording so your speech reads like clean, natural writing, in the language you spoke. Uses the local CLI.",
+    ar: "يصحح القواعد والصياغة ليصبح كلامك نصاً واضحاً وطبيعياً، بنفس اللغة التي تحدثت بها. يستخدم الـCLI المحلي.",
   },
   mode_prompt_desc: {
     en: "Turn your idea into a senior, context-engineered prompt. Uses the local CLI.",

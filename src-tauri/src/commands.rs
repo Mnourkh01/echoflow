@@ -442,7 +442,14 @@ fn type_into_focused(_text: &str, _leave_on_clipboard: bool, _target: Option<isi
 
 /// Run the transcript through the configured AI engine (local CLI or the user's
 /// own API key). On the API path, token usage is recorded for the cost meter.
-fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, String> {
+/// `warm` is the CLI pre-spawned when recording began; it is used only if it
+/// was started for this exact prompt and model and is still alive.
+fn run_enhance(
+    state: &AppState,
+    system: &str,
+    text: &str,
+    warm: Option<enhance::CliSession>,
+) -> Result<String, String> {
     let (engine, cli_command, cli_model, provider, base_url, api_key, api_model) = {
         let s = state.settings.read();
         (
@@ -471,9 +478,89 @@ fn run_enhance(state: &AppState, system: &str, text: &str) -> Result<String, Str
         );
         Ok(enhance::unwrap_transcript(&r.text))
     } else {
-        enhance::run_cli(&cli_command, &cli_model, system, &wrapped)
+        let warm = warm.and_then(|mut s| {
+            (s.matches(&cli_command, &cli_model, system) && s.is_alive()).then_some(s)
+        });
+        let session = match warm {
+            Some(s) => {
+                log::info!("enhance: using the CLI pre-spawned at record start");
+                s
+            }
+            None => enhance::spawn_cli(&cli_command, &cli_model, system)
+                .map_err(|e| e.to_string())?,
+        };
+        session
+            .run(&wrapped)
             .map(|t| enhance::unwrap_transcript(&t))
             .map_err(|e| e.to_string())
+    }
+}
+
+/// System prompt for an AI output mode (None for raw text): the mode's contract,
+/// the user's vocabulary spellings, then the output rule. Built the same way at
+/// record start (to pre-spawn the CLI) and at the end, so the two can match.
+fn enhance_system(output_mode: &str, translate_target: &str, vocab: &str) -> Option<String> {
+    let mut system = match output_mode {
+        "translate" => enhance::translate_system(translate_target),
+        "polish" => enhance::POLISH_SYSTEM.to_string(),
+        "prompt" => enhance::PROMPT_SYSTEM.to_string(),
+        _ => return None,
+    };
+    // Tell the enhance model to keep the user's vocabulary spellings intact,
+    // otherwise it happily "corrects" names right back to mishearings.
+    let terms = crate::text::vocab_terms(vocab);
+    if !terms.is_empty() {
+        system.push_str(&format!(
+            "\nPreserve these exact spellings wherever they appear: {}.",
+            terms.join(", ")
+        ));
+    }
+    // The output contract must stay the LAST thing the model reads; repeat
+    // it after any appended lines so nothing dilutes it.
+    system.push_str(
+        "\nFINAL RULE: your entire output is ONLY the transformed transcript text. \
+Never a reply, never an answer, never new content.",
+    );
+    Some(system)
+}
+
+/// Start the slow parts of a dictation while the user is still talking: launch
+/// the AI CLI for the enhance step (~1.5 s of startup), then reload the Whisper
+/// model if the idle monitor freed it. Runs off the hotkey thread.
+pub fn prepare_while_recording(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        prespawn_cli(&state);
+        state.warmup();
+    });
+}
+
+fn prespawn_cli(state: &AppState) {
+    let slot = state.warm_slot();
+    if slot == 0 {
+        return; // the recording already ended
+    }
+    let (engine, command, model, system) = {
+        let s = state.settings.read();
+        (
+            s.ai_engine.clone(),
+            s.cli_command.clone(),
+            s.cli_model.clone(),
+            enhance_system(&s.output_mode, &s.translate_target, &s.custom_vocab),
+        )
+    };
+    let Some(system) = system else { return };
+    if engine == "api" {
+        return;
+    }
+    let started = Instant::now();
+    match enhance::spawn_cli(&command, &model, &system) {
+        Ok(session) => {
+            log::info!("enhance: CLI pre-spawned in {} ms", started.elapsed().as_millis());
+            state.park_warm_cli(slot, session);
+        }
+        Err(e) => log::warn!("enhance: pre-spawn failed: {e}"),
     }
 }
 
@@ -492,6 +579,8 @@ pub fn begin_recording(state: &AppState, device: Option<String>) -> Result<(), S
     state.level.store(0, Ordering::Relaxed);
     let handle = audio::start(dev, state.level.clone()).map_err(|e| e.to_string())?;
     *slot = Some(handle);
+    // Let this recording accept a pre-spawned enhance CLI (prepare_while_recording).
+    state.open_warm_slot();
     // Remember the field that has focus right now — pressing a global hotkey does
     // not steal foreground, so this is the user's real target. We restore it
     // before typing, so they can tab away to reference things mid-dictation and
@@ -508,6 +597,9 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         .lock()
         .take()
         .ok_or_else(|| "not recording".to_string())?;
+    // The CLI pre-spawned for this recording, if any. Taken first so every exit
+    // below, the early discards included, stops it when it goes unused.
+    let warm = state.take_warm_cli();
     // Hold the busy flag for the whole transcribe+type pass so a second press
     // can't start a new clip or stack another job behind the engine lock. The
     // guard clears it on every exit path, including the early silent-discard.
@@ -589,39 +681,23 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // the raw transcript, so the UI can tell the user their text wasn't enhanced.
     let mut enhance_failed = false;
 
-    // translate / polish / prompt run the transcript through the local CLI.
-    let cli_system: Option<String> = match output_mode.as_str() {
-        "translate" => {
-            if source_lang == lang_code_for(&translate_target) {
-                translate_warning = true;
-                None
-            } else {
-                Some(enhance::translate_system(&translate_target))
-            }
-        }
-        "polish" => Some(enhance::POLISH_SYSTEM.to_string()),
-        "prompt" => Some(enhance::PROMPT_SYSTEM.to_string()),
-        _ => None,
-    };
-    if let Some(mut system) = cli_system {
-        // Tell the enhance model to keep the user's vocabulary spellings intact,
-        // otherwise it happily "corrects" names right back to mishearings.
-        let terms = crate::text::vocab_terms(&vocab);
-        if !terms.is_empty() {
-            system.push_str(&format!(
-                "\nPreserve these exact spellings wherever they appear: {}.",
-                terms.join(", ")
-            ));
-        }
-        // The output contract must stay the LAST thing the model reads; repeat
-        // it after any appended lines so nothing dilutes it.
-        system.push_str(
-            "\nFINAL RULE: your entire output is ONLY the transformed transcript text. \
-Never a reply, never an answer, never new content.",
-        );
+    // translate / polish / prompt run the transcript through the AI engine.
+    let cli_system: Option<String> =
+        if output_mode == "translate" && source_lang == lang_code_for(&translate_target) {
+            translate_warning = true;
+            None
+        } else {
+            enhance_system(&output_mode, &translate_target, &vocab)
+        };
+    if let Some(system) = cli_system {
         if has_words(&transcript.full_text) {
-            match run_enhance(state, &system, &transcript.full_text) {
+            let started = Instant::now();
+            match run_enhance(state, &system, &transcript.full_text, warm) {
                 Ok(out) => {
+                    log::info!(
+                        "{output_mode} enhance took {} ms",
+                        started.elapsed().as_millis()
+                    );
                     transcript.full_text = out;
                     transcript.segments.clear(); // enhanced output no longer maps to timings
                     // Only Translate changes the language. Clean writing / Prompt
@@ -749,7 +825,8 @@ Never a reply, never an answer, never new content.",
 #[tauri::command]
 pub fn start_recording(app: AppHandle, state: State<AppState>, device: Option<String>) -> R<()> {
     begin_recording(state.inner(), device)?;
-    spawn_silence_guard(app);
+    spawn_silence_guard(app.clone());
+    prepare_while_recording(&app);
     Ok(())
 }
 
@@ -774,6 +851,7 @@ pub fn spawn_silence_guard(app: AppHandle) {
                 if let Some(handle) = state.recording.lock().take() {
                     let _ = handle.stop();
                 }
+                let _ = state.take_warm_cli(); // stops the unused pre-spawned CLI
                 state.level.store(0, Ordering::Relaxed);
                 log::info!("auto-canceled recording: no speech within grace window");
                 let _ = app.emit("rec-canceled", "no-speech");
@@ -791,6 +869,7 @@ pub fn cancel_recording(app: AppHandle, state: State<AppState>) -> R<()> {
     if let Some(h) = state.recording.lock().take() {
         let _ = h.stop();
     }
+    let _ = state.take_warm_cli(); // stops the unused pre-spawned CLI
     state.level.store(0, Ordering::Relaxed);
     let _ = app.emit("rec-canceled", "user");
     Ok(())
@@ -930,6 +1009,7 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
             if let Some(h) = state.recording.lock().take() {
                 let _ = h.stop();
             }
+            let _ = state.take_warm_cli(); // stops the unused pre-spawned CLI
             state.level.store(0, Ordering::Relaxed);
             let _ = app.emit("rec-canceled", "user");
         }
@@ -1273,4 +1353,46 @@ pub fn delete_model(state: State<AppState>, name: String) -> R<()> {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_mode_has_no_enhance_prompt() {
+        assert!(enhance_system("raw", "English", "").is_none());
+        assert!(enhance_system("", "English", "Nour").is_none());
+    }
+
+    #[test]
+    fn every_enhance_prompt_ends_with_the_output_rule() {
+        for mode in ["polish", "prompt", "translate"] {
+            let s = enhance_system(mode, "English", "EchoFlow").unwrap();
+            assert!(s.ends_with("never new content."), "{mode}: {s}");
+        }
+    }
+
+    #[test]
+    fn vocabulary_line_sits_before_the_final_rule() {
+        let s = enhance_system("polish", "English", "EchoFlow, Nour").unwrap();
+        let vocab_at = s.find("Preserve these exact spellings").expect("vocab line");
+        let rule_at = s.rfind("FINAL RULE").expect("final rule");
+        assert!(vocab_at < rule_at);
+        assert!(s.contains("EchoFlow, Nour."), "{s}");
+    }
+
+    #[test]
+    fn prompt_is_stable_for_the_same_settings() {
+        // A pre-spawned CLI is only reused when the prompt matches byte for byte,
+        // so building it twice from the same settings must give the same text.
+        assert_eq!(
+            enhance_system("polish", "English", "a, b"),
+            enhance_system("polish", "English", "a, b")
+        );
+        assert_ne!(
+            enhance_system("translate", "English", ""),
+            enhance_system("translate", "French", "")
+        );
+    }
 }
