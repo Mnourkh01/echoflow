@@ -257,12 +257,11 @@ pub fn run() {
                 .unwrap_or_else(|_| std::env::temp_dir().join("voice-app"));
             let paths = AppPaths::new(data_dir).map_err(|e| e.to_string())?;
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
-            let settings = db.load_settings();
+            let (settings, settings_ok) = db.load_settings();
             let hotkey = settings.ptt_hotkey.clone();
             let toggle_hotkey = settings.toggle_hotkey.clone();
-            let retention = settings.retention_days;
 
-            app.manage(AppState::new(paths, db, settings));
+            app.manage(AppState::new(paths, db, settings, settings_ok));
 
             // "Always run as administrator": relaunch elevated before any UI
             // work. On success the elevated instance takes over and this one
@@ -280,16 +279,9 @@ pub fn run() {
 
             let _ = commands::register_shortcuts(app.handle(), &hotkey, &toggle_hotkey);
 
-            // Enforce the retention policy on launch: drop old recordings + audio
-            // so storage never grows without bound.
-            {
-                let st = app.state::<AppState>();
-                if let Ok(paths) = st.db.purge_older_than(retention) {
-                    for p in paths {
-                        let _ = std::fs::remove_file(p);
-                    }
-                }
-            }
+            // Enforce the retention policy on launch too; the idle monitor below
+            // keeps enforcing it while the app stays open.
+            commands::purge_expired(app.state::<AppState>().inner());
 
             // Park the floating overlay pill at bottom-center of the primary screen.
             if let Some(overlay) = app.get_webview_window("overlay") {
@@ -350,8 +342,9 @@ pub fn run() {
             let warm = app.handle().clone();
             std::thread::spawn(move || warm.state::<AppState>().warmup());
 
-            // Idle monitor: free the model from RAM after the configured idle
-            // window so the app stays light when it's not in use.
+            // Idle monitor, once a minute: free the model from RAM after the
+            // configured idle window, and apply the retention window. The app
+            // lives in the tray for days, so a launch-only purge never ran.
             let idle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(60));
@@ -359,6 +352,10 @@ pub fn run() {
                 let mins = st.settings.read().idle_unload_minutes;
                 if mins > 0 {
                     st.maybe_unload_idle(std::time::Duration::from_secs((mins as u64) * 60));
+                }
+                let purged = commands::purge_expired(st.inner());
+                if !purged.is_empty() {
+                    let _ = idle.emit("history-changed", &purged);
                 }
             });
             Ok(())

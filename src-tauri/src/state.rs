@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
 
 use crate::audio::RecordingHandle;
@@ -52,6 +53,12 @@ pub struct AppState {
     warm_slot: AtomicU64,
     /// Source of `warm_slot` values, one per recording.
     warm_seq: AtomicU64,
+    /// False while the settings in use are defaults from a failed load; the
+    /// retention purge waits for a clean load or a save (see `Db::load_settings`).
+    settings_ok: AtomicBool,
+    /// Wall clock and monotonic clock at launch, to spot a forward clock jump.
+    started_wall: DateTime<Utc>,
+    started_mono: Instant,
 }
 
 /// Clears the `transcribing` flag when dropped, so it can never get stuck on
@@ -65,7 +72,7 @@ impl Drop for TranscribeGuard<'_> {
 }
 
 impl AppState {
-    pub fn new(paths: AppPaths, db: Db, settings: Settings) -> Self {
+    pub fn new(paths: AppPaths, db: Db, settings: Settings, settings_ok: bool) -> Self {
         Self {
             paths,
             db,
@@ -82,7 +89,26 @@ impl AppState {
             warm_cli: Mutex::new(None),
             warm_slot: AtomicU64::new(0),
             warm_seq: AtomicU64::new(0),
+            settings_ok: AtomicBool::new(settings_ok),
+            started_wall: Utc::now(),
+            started_mono: Instant::now(),
         }
+    }
+
+    pub fn settings_trusted(&self) -> bool {
+        self.settings_ok.load(Ordering::SeqCst)
+    }
+
+    pub fn mark_settings_trusted(&self) {
+        self.settings_ok.store(true, Ordering::SeqCst);
+    }
+
+    /// False when the wall clock has run more than an hour ahead of the time
+    /// that really passed since launch (a manual date change or a bad time
+    /// sync). A purge on that clock would delete recent history. Windows'
+    /// monotonic clock keeps counting through sleep, so a suspend does not trip it.
+    pub fn clock_sane(&self) -> bool {
+        clock_sane(self.started_wall, Utc::now(), self.started_mono.elapsed())
     }
 
     pub fn open_warm_slot(&self) {
@@ -241,5 +267,29 @@ impl AppState {
         // is visible after the fact (the "becomes unresponsive after ~2h" report).
         log::info!("transcribe finished; rss = {:.0} MB", crate::mem::rss_mb());
         result
+    }
+}
+
+/// A clock that moved backwards only shrinks what a purge deletes, so it counts
+/// as sane; only a forward jump beyond the real elapsed time plus an hour does not.
+fn clock_sane(start_wall: DateTime<Utc>, now_wall: DateTime<Utc>, real_elapsed: Duration) -> bool {
+    match (now_wall - start_wall).to_std() {
+        Ok(wall_elapsed) => wall_elapsed <= real_elapsed + Duration::from_secs(3600),
+        Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clock_jump_forward_is_not_sane() {
+        let start = Utc::now();
+        let a_minute = Duration::from_secs(60);
+        assert!(clock_sane(start, start + chrono::Duration::seconds(60), a_minute));
+        assert!(clock_sane(start, start + chrono::Duration::minutes(50), a_minute), "drift under an hour is fine");
+        assert!(!clock_sane(start, start + chrono::Duration::days(30), a_minute));
+        assert!(clock_sane(start, start - chrono::Duration::days(3), a_minute), "going back deletes less");
     }
 }

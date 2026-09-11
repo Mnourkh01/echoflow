@@ -58,6 +58,9 @@ export default function App() {
   settingsRef.current = settings;
   // Declared here (above start/stop) so both closures share it without TDZ risk.
   const cancelingRef = useRef(false);
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  const queryRef = useRef<string | null>(null);
 
   const refreshHistory = useCallback(async (q: string | null = null) => {
     setHistory(await api.listRecordings(q && q.length ? q : null));
@@ -278,6 +281,15 @@ export default function App() {
     });
     // Output mode (and other settings) can change from the tray menu; keep the UI in sync.
     const offSettings = listen<Settings>("settings-changed", (e) => setSettings(e.payload));
+    // The retention purge (timer or settings save) deleted rows: close the open
+    // transcript only if it was one of them, and keep the current search.
+    const offPurged = listen<number[]>("history-changed", (e) => {
+      if (activeIdRef.current !== null && e.payload.includes(activeIdRef.current)) {
+        setActiveId(null);
+        setCurrent(null);
+      }
+      refreshHistory(queryRef.current);
+    });
     return () => {
       offStarted.then((f) => f());
       offStopped.then((f) => f());
@@ -285,6 +297,7 @@ export default function App() {
       offError.then((f) => f());
       offCanceled.then((f) => f());
       offSettings.then((f) => f());
+      offPurged.then((f) => f());
     };
   }, [refreshHistory, flashNotice, flashMic]);
 
@@ -402,7 +415,10 @@ export default function App() {
         onSelect={selectRecording}
         onDelete={deleteRecording}
         onPin={togglePin}
-        onSearch={(q) => refreshHistory(q)}
+        onSearch={(q) => {
+          queryRef.current = q;
+          refreshHistory(q);
+        }}
         prompts={prompts}
         activePromptId={activePromptId}
         onSelectPrompt={setActivePromptId}

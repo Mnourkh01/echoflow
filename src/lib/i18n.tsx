@@ -330,6 +330,7 @@ const STRINGS = {
     en: "Keeps storage small. Recordings older than this are removed permanently. This is normal for a dictation app, your text is meant to be used, not archived forever.",
     ar: "يبقي التخزين صغيراً. تُحذف التسجيلات الأقدم من هذه المدة نهائياً. هذا طبيعي لتطبيق إملاء، فنصوصك للاستخدام لا للأرشفة للأبد.",
   },
+  retain_1d: { en: "1 day", ar: "يوم واحد" },
   retain_1w: { en: "1 week", ar: "أسبوع" },
   retain_2w: { en: "2 weeks", ar: "أسبوعان" },
   retain_1m: { en: "1 month", ar: "شهر" },

@@ -2,7 +2,7 @@
 //! single-user and low-concurrency, so this is plenty.
 
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::path::Path;
@@ -220,29 +220,37 @@ impl Db {
         Ok(audio_path)
     }
 
-    /// Delete recordings older than `days` and return their audio paths so the
-    /// caller can remove the files from disk. `days <= 0` keeps everything.
-    /// Timestamps are RFC3339 UTC, so a string compare is a correct time compare.
-    pub fn purge_older_than(&self, days: i64) -> Result<Vec<String>> {
+    /// Delete recordings older than `days` and return their ids and audio paths
+    /// so the caller can remove the files and tell the UI. `days <= 0` keeps
+    /// everything. Timestamps are chrono RFC3339 UTC from a single writer, so a
+    /// string compare is a correct time compare (pinned by the tests below).
+    pub fn purge_older_than(&self, days: i64) -> Result<Vec<(i64, String)>> {
+        self.purge_older_than_at(Utc::now(), days)
+    }
+
+    pub fn purge_older_than_at(&self, now: DateTime<Utc>, days: i64) -> Result<Vec<(i64, String)>> {
         if days <= 0 {
             return Ok(Vec::new());
         }
-        let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        let cutoff = (now - chrono::Duration::days(days)).to_rfc3339();
         let conn = self.conn.lock();
-        let mut paths = Vec::new();
+        let mut doomed = Vec::new();
         {
-            let mut stmt = conn
-                .prepare("SELECT audio_path FROM recordings WHERE created_at < ?1 AND pinned = 0")?;
-            let rows = stmt.query_map([&cutoff], |row| row.get::<_, String>(0))?;
+            let mut stmt = conn.prepare(
+                "SELECT id, audio_path FROM recordings WHERE created_at < ?1 AND pinned = 0",
+            )?;
+            let rows = stmt.query_map([&cutoff], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
             for r in rows {
-                paths.push(r?);
+                doomed.push(r?);
             }
         }
         conn.execute(
             "DELETE FROM recordings WHERE created_at < ?1 AND pinned = 0",
             [&cutoff],
         )?;
-        Ok(paths)
+        Ok(doomed)
     }
 
     /// Delete every recording (segments cascade) and return all audio paths so
@@ -326,16 +334,31 @@ impl Db {
         Ok(())
     }
 
-    pub fn load_settings(&self) -> Settings {
+    /// Settings plus whether they came from a clean read. No row yet (first run)
+    /// is clean. A row that fails to read or parse is not: the defaults it falls
+    /// back to include a 14-day retention, which must never purge the history of
+    /// someone who chose "keep everything".
+    pub fn load_settings(&self) -> (Settings, bool) {
         let conn = self.conn.lock();
-        conn.query_row(
+        let row = conn.query_row(
             "SELECT value FROM settings WHERE key = 'app'",
             [],
             |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default()
+        );
+        match row {
+            Err(rusqlite::Error::QueryReturnedNoRows) => (Settings::default(), true),
+            Err(e) => {
+                log::warn!("settings read failed, using defaults: {e}");
+                (Settings::default(), false)
+            }
+            Ok(json) => match serde_json::from_str(&json) {
+                Ok(s) => (s, true),
+                Err(e) => {
+                    log::warn!("settings parse failed, using defaults: {e}");
+                    (Settings::default(), false)
+                }
+            },
+        }
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
@@ -347,5 +370,87 @@ impl Db {
             [json],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static N: AtomicU32 = AtomicU32::new(0);
+
+    fn temp_db() -> (Db, std::path::PathBuf) {
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("echoflow-test-{}-{n}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        (Db::open(&path).unwrap(), path)
+    }
+
+    fn add(db: &Db, created_at: &str, pinned: bool) -> i64 {
+        let id = db
+            .insert_recording(created_at, 1000, "en", 1.0, "m", &format!("x-{created_at}.wav"), 16_000, "t", &[])
+            .unwrap();
+        if pinned {
+            db.set_pinned(id, true).unwrap();
+        }
+        id
+    }
+
+    fn ids(v: &[(i64, String)]) -> Vec<i64> {
+        let mut out: Vec<i64> = v.iter().map(|(id, _)| *id).collect();
+        out.sort();
+        out
+    }
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 9, 11, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn purge_removes_only_old_unpinned_rows() {
+        let (db, _path) = temp_db();
+        let old = add(&db, "2026-09-01T12:00:00.123456789+00:00", false);
+        let old_pinned = add(&db, "2026-09-01T12:00:00+00:00", true);
+        let recent = add(&db, "2026-09-10T12:00:00.5+00:00", false);
+        let gone = db.purge_older_than_at(now(), 7).unwrap();
+        assert_eq!(ids(&gone), vec![old]);
+        let left: Vec<i64> = db.list_recordings(None).unwrap().iter().map(|r| r.id).collect();
+        assert!(left.contains(&old_pinned) && left.contains(&recent) && !left.contains(&old));
+    }
+
+    #[test]
+    fn purge_zero_days_keeps_everything() {
+        let (db, _path) = temp_db();
+        add(&db, "2020-01-01T00:00:00+00:00", false);
+        assert!(db.purge_older_than_at(now(), 0).unwrap().is_empty());
+        assert_eq!(db.list_recordings(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn purge_cutoff_is_exact_across_timestamp_precisions() {
+        // 1 day before `now` is 2026-09-10T12:00:00Z. chrono prints 0, 3, 6 or 9
+        // fraction digits, and the string compare must still order them right.
+        let (db, _path) = temp_db();
+        let a = add(&db, "2026-09-10T11:59:59+00:00", false);
+        let b = add(&db, "2026-09-10T11:59:59.999999999+00:00", false);
+        add(&db, "2026-09-10T12:00:00+00:00", false); // exactly at the cutoff: kept
+        add(&db, "2026-09-10T12:00:00.000000001+00:00", false);
+        add(&db, "2026-09-10T12:00:01.5+00:00", false);
+        let gone = db.purge_older_than_at(now(), 1).unwrap();
+        assert_eq!(ids(&gone), vec![a, b]);
+        assert_eq!(db.list_recordings(None).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn unreadable_settings_are_flagged_not_trusted() {
+        let (db, _path) = temp_db();
+        assert!(db.load_settings().1, "no row yet is a clean first run");
+        db.conn
+            .lock()
+            .execute("INSERT INTO settings (key, value) VALUES ('app', '{not json')", [])
+            .unwrap();
+        assert!(!db.load_settings().1);
     }
 }

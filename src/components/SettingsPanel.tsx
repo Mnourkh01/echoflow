@@ -100,6 +100,7 @@ const REC_LANGS: { code: string; label: string }[] = [
 
 // Retention windows offered to the user. 0 = keep everything.
 const RETENTION: [number, StringKey][] = [
+  [1, "retain_1d"],
   [7, "retain_1w"],
   [14, "retain_2w"],
   [30, "retain_1m"],

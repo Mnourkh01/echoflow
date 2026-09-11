@@ -974,6 +974,38 @@ pub fn get_settings(state: State<AppState>) -> Settings {
     state.settings.read().clone()
 }
 
+/// Delete recordings past the retention window, plus their audio files. Runs at
+/// launch, on settings save, and on every idle-monitor tick, so a tray app left
+/// open for days still honours the setting. Returns the deleted ids.
+pub fn purge_expired(state: &AppState) -> Vec<i64> {
+    if !state.settings_trusted() {
+        return Vec::new();
+    }
+    if !state.clock_sane() {
+        log::warn!("retention purge skipped: the clock jumped forward since launch");
+        return Vec::new();
+    }
+    let days = state.settings.read().retention_days;
+    let doomed = match state.db.purge_older_than(days) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("retention purge failed: {e}");
+            return Vec::new();
+        }
+    };
+    for (_, path) in &doomed {
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("retention purge: could not delete {path}: {e}");
+            }
+        }
+    }
+    if !doomed.is_empty() {
+        log::info!("retention purge: removed {} recordings older than {days} days", doomed.len());
+    }
+    doomed.into_iter().map(|(id, _)| id).collect()
+}
+
 /// Returns whether the global hotkey registered successfully.
 #[tauri::command]
 pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> R<bool> {
@@ -988,13 +1020,13 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     state.db.save_settings(&settings).map_err(|e| e.to_string())?;
     let ptt = settings.ptt_hotkey.clone();
     let toggle = settings.toggle_hotkey.clone();
-    let retention = settings.retention_days;
     *state.settings.write() = settings;
-    // Apply a shortened retention window immediately, not just on next launch.
-    if let Ok(paths) = state.db.purge_older_than(retention) {
-        for p in paths {
-            let _ = std::fs::remove_file(p);
-        }
+    // The user just saved these, so they are trustworthy even if the stored row
+    // was not. Apply a shortened retention window immediately.
+    state.mark_settings_trusted();
+    let purged = purge_expired(state.inner());
+    if !purged.is_empty() {
+        let _ = app.emit("history-changed", &purged);
     }
     // Keep the tray's mode menu in sync with changes made in the UI.
     crate::refresh_tray_menu(&app);
@@ -1358,6 +1390,42 @@ pub fn delete_model(state: State<AppState>, name: String) -> R<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_state(retention_days: i64, settings_ok: bool) -> AppState {
+        use std::sync::atomic::AtomicU32;
+        static N: AtomicU32 = AtomicU32::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "echoflow-state-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        let paths = AppPaths::new(dir).unwrap();
+        let db = crate::db::Db::open(&paths.db_path).unwrap();
+        let settings = Settings { retention_days, ..Settings::default() };
+        AppState::new(paths, db, settings, settings_ok)
+    }
+
+    #[test]
+    fn purge_expired_removes_rows_and_audio_only_when_settings_are_trusted() {
+        for trusted in [true, false] {
+            let state = temp_state(7, trusted);
+            let wav = state.paths.new_audio_path(1);
+            std::fs::write(&wav, b"RIFF").unwrap();
+            let old = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+            let id = state
+                .db
+                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[])
+                .unwrap();
+            let gone = purge_expired(&state);
+            if trusted {
+                assert_eq!(gone, vec![id]);
+                assert!(!wav.exists(), "the audio file goes with its row");
+            } else {
+                assert!(gone.is_empty(), "never purge on fallback defaults");
+                assert!(wav.exists());
+            }
+        }
+    }
 
     #[test]
     fn raw_mode_has_no_enhance_prompt() {
