@@ -26,6 +26,10 @@ pub struct RecordingResult {
     /// transcript. Lets the UI tell the user their words are raw, not enhanced.
     /// Always false for stored rows.
     pub enhance_failed: bool,
+    /// True when the AI reply did not look like the user's words (it answered
+    /// the dictation or talked about the task), so the raw transcript was kept.
+    /// Always false for stored rows.
+    pub enhance_rejected: bool,
     /// True when auto-type couldn't deliver into the origin field — the window
     /// the user started in is gone, or it's an elevated app (Task Manager and
     /// other admin windows block input from a normal-rights app). The text is
@@ -67,6 +71,9 @@ pub struct Settings {
     pub noise_suppression: bool, // RNNoise denoise on the mic before transcription
     pub output_mode: String,  // "raw" | "translate" | "polish" | "prompt"
     pub translate_target: String, // language name to translate INTO (e.g. "English")
+    /// Language code Translate listens for ("ar", "auto", "fr"...). None means not
+    /// chosen yet: Arabic when translating into English, otherwise auto-detect.
+    pub translate_from: Option<String>,
     pub restore_diacritics: bool, // put accents back on English loanwords (café, résumé)
     pub voice_commands: bool,  // raw mode: spoken "new line"/"period"/... become real punctuation
     pub ai_engine: String,    // "cli" (default) | "api"
@@ -109,6 +116,7 @@ impl Default for Settings {
             noise_suppression: false,
             output_mode: "raw".to_string(),
             translate_target: "English".to_string(),
+            translate_from: None,
             restore_diacritics: true,
             voice_commands: false,
             ai_engine: "cli".to_string(),

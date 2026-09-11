@@ -47,9 +47,11 @@ cd src-tauri && cargo test
 cd src-tauri && cargo build
 ```
 
-Toolchain lives outside the repo under `.tools/` (Rust via rustup, portable CMake) plus
-LLVM in `%LOCALAPPDATA%\llvm` (libclang for bindgen). MSVC build tools are required and
-already installed on this machine.
+Toolchain lives outside the repo under `.tools/` (Rust via rustup, portable CMake).
+whisper-rs-sys needs libclang for bindgen: set `LIBCLANG_PATH` (release.ps1 falls back
+to the pip wheel's `clang\native`) and pin `CMAKE_GENERATOR="Visual Studio 16 2019"`,
+or a fresh clone fails with "Unable to find libclang". MSVC build tools are required
+and already installed on this machine.
 
 ## Conventions
 
@@ -96,6 +98,28 @@ already installed on this machine.
   (otherwise a hidden extra Haiku call rides along). Every path that ends a
   recording must call `take_warm_cli()` so the process never lingers.
   Recording start also reloads the Whisper model if the idle monitor freed it.
+- Language lock: with the recognition language set to `en` or `ar`, Clean writing
+  and Prompt mode write only that language and translate stray words
+  (`enhance::Lock`); Auto keeps the spoken language; other forced codes act like
+  Auto. Raw mode has no AI step, so it cannot translate stray words.
+- Translate listens for `translate_from` (`commands::effective_translate_from`:
+  unset means Arabic when the target is English, else auto), never the
+  recognition language. The offline Whisper-translate fallback is skipped for
+  turbo models (never trained to translate) and refused if it comes back Arabic.
+- Enhance prompts are built only through `EnhanceCfg::from_settings`, so the
+  pre-spawned CLI's prompt matches the one used at the end. Every reply passes
+  `enhance::check_reply` before it is typed: a meta reply ("I can only rewrite
+  transcripts...") or an answer-shaped one keeps the raw transcript and sets
+  `enhance_rejected`. Re-check trick dictations on Sonnet AND Haiku after any
+  prompt change (`cargo test --lib dump_prompts -- --ignored` exports them).
+- Quiet speech: `audio::speech_present` (30 ms frames) is the silence gate, the VAD
+  floor is 4e-4 on the 95th-percentile frame, `SPEECH_LEVEL` is 0.003. Re-run
+  `whisper::tests::replay_quiet_speech` after touching any of them.
+- Retention purge runs at launch, on settings save and every idle-monitor minute;
+  it is skipped while the settings failed to load or the wall clock jumped ahead
+  of real elapsed time.
+- `?preview=settings` on the Vite dev server shows the Settings panel with the
+  Tauri IPC mocked (dev builds only).
 - Esc / the X button cancels a take: while recording it discards the clip;
   while transcribing it aborts the decode via the whisper abort callback.
 - `?preview=mascot` on the Vite dev server shows a browser-only harness for the

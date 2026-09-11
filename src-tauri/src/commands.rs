@@ -118,10 +118,9 @@ fn has_words(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
 }
 
-/// Map a translation target language name to an ISO code (drives RTL rendering
-/// and the history badge). Falls back to English.
-fn lang_code_for(target: &str) -> String {
-    match target.trim().to_ascii_lowercase().as_str() {
+/// ISO code for a language NAME, or None when the name is not one we know.
+fn strict_lang_code(name: &str) -> Option<&'static str> {
+    Some(match name.trim().to_ascii_lowercase().as_str() {
         "arabic" => "ar",
         "english" => "en",
         "french" => "fr",
@@ -129,6 +128,7 @@ fn lang_code_for(target: &str) -> String {
         "german" => "de",
         "italian" => "it",
         "portuguese" => "pt",
+        "dutch" => "nl",
         "turkish" => "tr",
         "russian" => "ru",
         "hindi" => "hi",
@@ -138,9 +138,54 @@ fn lang_code_for(target: &str) -> String {
         "chinese" => "zh",
         "japanese" => "ja",
         "korean" => "ko",
-        _ => "en",
+        _ => return None,
+    })
+}
+
+/// Map a translation target language name to an ISO code (drives RTL rendering
+/// and the history badge). Falls back to English.
+fn lang_code_for(target: &str) -> String {
+    strict_lang_code(target).unwrap_or("en").to_string()
+}
+
+/// Language name for a recognition code, for prompts. None for "auto" or an
+/// unknown code.
+fn lang_name(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "ar" => "Arabic",
+        "en" => "English",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "nl" => "Dutch",
+        _ => return None,
+    })
+}
+
+/// The language Translate listens for. An explicit choice wins; otherwise
+/// Arabic when translating into English (what EchoFlow's Translate is for), and
+/// auto-detect for any other target so setups that translate into Arabic keep
+/// working.
+fn effective_translate_from(s: &Settings) -> String {
+    match s.translate_from.as_deref().map(str::trim) {
+        Some(code) if !code.is_empty() => code.to_string(),
+        _ if strict_lang_code(&s.translate_target) == Some("en") => "ar".to_string(),
+        _ => "auto".to_string(),
     }
-    .to_string()
+}
+
+/// Whisper's input language. Translate listens for its own source language
+/// (Arabic by default, even when the recognition language is English), so
+/// Arabic speech is no longer decoded as English and then skipped as "already
+/// English". Every other mode uses the recognition language.
+fn decode_language(output_mode: &str, language_mode: &str, translate_from: &str) -> String {
+    if output_mode == "translate" {
+        translate_from.to_string()
+    } else {
+        language_mode.to_string()
+    }
 }
 
 /// The window that owns focus right now, unless it belongs to our own process
@@ -437,16 +482,26 @@ fn type_into_focused(_text: &str, _leave_on_clipboard: bool, _target: Option<isi
     false
 }
 
+/// Why the enhance step produced nothing usable.
+enum EnhanceErr {
+    /// The engine could not run or answer (offline, CLI missing, timeout).
+    Failed(String),
+    /// It answered, but not with the user's words (see `enhance::check_reply`).
+    Rejected(String),
+}
+
 /// Run the transcript through the configured AI engine (local CLI or the user's
 /// own API key). On the API path, token usage is recorded for the cost meter.
 /// `warm` is the CLI pre-spawned when recording began; it is used only if it
-/// was started for this exact prompt and model and is still alive.
+/// was started for this exact prompt and model and is still alive. The reply is
+/// checked before it can be typed into the user's app.
 fn run_enhance(
     state: &AppState,
+    mode: &str,
     system: &str,
     text: &str,
     warm: Option<enhance::CliSession>,
-) -> Result<String, String> {
+) -> Result<String, EnhanceErr> {
     let (engine, cli_command, cli_model, provider, base_url, api_key, api_model) = {
         let s = state.settings.read();
         (
@@ -464,16 +519,16 @@ fn run_enhance(
     // as instructions addressed to it (the "it answered me instead of cleaning
     // my words" failure, which capable models hit on command-shaped dictation).
     let wrapped = enhance::wrap_transcript(text);
-    if engine == "api" {
+    let reply = if engine == "api" {
         let r = enhance::run_api(&provider, &base_url, &api_key, &api_model, system, &wrapped)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| EnhanceErr::Failed(e.to_string()))?;
         let _ = state.db.add_usage(r.input_tokens as i64, r.output_tokens as i64);
         log::info!(
             "api usage: +{} in / +{} out tokens",
             r.input_tokens,
             r.output_tokens
         );
-        Ok(enhance::unwrap_transcript(&r.text))
+        enhance::unwrap_transcript(&r.text)
     } else {
         let warm = warm.and_then(|mut s| {
             (s.matches(&cli_command, &cli_model, system) && s.is_alive()).then_some(s)
@@ -484,41 +539,74 @@ fn run_enhance(
                 s
             }
             None => enhance::spawn_cli(&cli_command, &cli_model, system)
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| EnhanceErr::Failed(e.to_string()))?,
         };
         session
             .run(&wrapped)
             .map(|t| enhance::unwrap_transcript(&t))
-            .map_err(|e| e.to_string())
+            .map_err(|e| EnhanceErr::Failed(e.to_string()))?
+    };
+    match enhance::check_reply(mode, text, &reply) {
+        Ok(()) => Ok(reply),
+        Err(why) => Err(EnhanceErr::Rejected(format!(
+            "{why:?}: {}",
+            reply.chars().take(80).collect::<String>()
+        ))),
     }
 }
 
-/// System prompt for an AI output mode (None for raw text): the mode's contract,
-/// the user's vocabulary spellings, then the output rule. Built the same way at
-/// record start (to pre-spawn the CLI) and at the end, so the two can match.
-fn enhance_system(output_mode: &str, translate_target: &str, vocab: &str) -> Option<String> {
-    let mut system = match output_mode {
-        "translate" => enhance::translate_system(translate_target),
-        "polish" => enhance::POLISH_SYSTEM.to_string(),
-        "prompt" => enhance::PROMPT_SYSTEM.to_string(),
-        _ => return None,
-    };
-    // Tell the enhance model to keep the user's vocabulary spellings intact,
-    // otherwise it happily "corrects" names right back to mishearings.
-    let terms = crate::text::vocab_terms(vocab);
-    if !terms.is_empty() {
-        system.push_str(&format!(
-            "\nPreserve these exact spellings wherever they appear: {}.",
-            terms.join(", ")
-        ));
+/// Everything that shapes the enhance system prompt, from one settings snapshot.
+/// Built at record start (to pre-spawn the CLI) and again at the end; the
+/// pre-spawned process is reused only when both builds give the same prompt, so
+/// this is the only way to build it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnhanceCfg {
+    mode: String,
+    target: String,
+    from: String,
+    lock: enhance::Lock,
+    vocab: String,
+}
+
+impl EnhanceCfg {
+    fn from_settings(s: &Settings) -> Self {
+        Self {
+            mode: s.output_mode.clone(),
+            target: s.translate_target.clone(),
+            from: effective_translate_from(s),
+            lock: enhance::Lock::from_language_mode(&s.language_mode),
+            vocab: s.custom_vocab.clone(),
+        }
     }
-    // The output contract must stay the LAST thing the model reads; repeat
-    // it after any appended lines so nothing dilutes it.
-    system.push_str(
-        "\nFINAL RULE: your entire output is ONLY the transformed transcript text. \
+
+    /// The mode's contract, the user's vocabulary, then the output rule. None
+    /// for raw text.
+    fn system_prompt(&self) -> Option<String> {
+        let mut system = match self.mode.as_str() {
+            "translate" => enhance::translate_system_from(lang_name(&self.from), &self.target),
+            "polish" => enhance::polish_system(self.lock),
+            "prompt" => enhance::prompt_system(self.lock),
+            _ => return None,
+        };
+        // Keep the user's vocabulary intact, otherwise the model "corrects" names
+        // back to mishearings. Asking it to map sound-alikes onto these terms was
+        // tried and rejected: Sonnet turned a misheard "Frenchman" into the wrong
+        // listed term. Whisper's own vocabulary prompt does that job instead.
+        let terms = crate::text::vocab_terms(&self.vocab);
+        if !terms.is_empty() {
+            system.push_str(&format!(
+                "\nPreserve these exact spellings wherever they appear: {}.",
+                terms.join(", ")
+            ));
+        }
+        // The output contract must stay the LAST thing the model reads; repeat
+        // it after any appended lines so nothing dilutes it.
+        system.push_str(
+            "\nFINAL RULE: your entire output is ONLY the transformed transcript text. \
 Never a reply, never an answer, never new content.",
-    );
-    Some(system)
+        );
+        Some(system)
+    }
 }
 
 /// Start the slow parts of a dictation while the user is still talking: launch
@@ -544,7 +632,7 @@ fn prespawn_cli(state: &AppState) {
             s.ai_engine.clone(),
             s.cli_command.clone(),
             s.cli_model.clone(),
-            enhance_system(&s.output_mode, &s.translate_target, &s.custom_vocab),
+            EnhanceCfg::from_settings(&s).system_prompt(),
         )
     };
     let Some(system) = system else { return };
@@ -625,7 +713,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let denoise = state.settings.read().noise_suppression;
     let audio_16k = audio::prepare_for_whisper(&captured, denoise);
 
-    let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target) = {
+    let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target, cfg) = {
         let s = state.settings.read();
         (
             s.model.clone(),
@@ -638,8 +726,13 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             s.voice_commands,
             s.output_mode.clone(),
             s.translate_target.clone(),
+            EnhanceCfg::from_settings(&s),
         )
     };
+    let decode_lang = decode_language(&output_mode, &lang_mode, &cfg.from);
+    if decode_lang != lang_mode {
+        log::info!("{output_mode}: listening for '{decode_lang}' (translate source), not '{lang_mode}'");
+    }
 
     // Always transcribe in the spoken language first. The CLI step does the
     // language work (it handles Arabic dialects far better than Whisper's weak
@@ -647,7 +740,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // A user cancel (the cancel button while transcribing) surfaces as a decode
     // error with the cancel flag set; treat it as a quiet discard, not an error.
     let mut transcript =
-        match state.transcribe(&audio_16k, &model, &lang_mode, false, &dialect, &vocab) {
+        match state.transcribe(&audio_16k, &model, &decode_lang, false, &dialect, &vocab) {
             Ok(t) => t,
             Err(_) if state.transcribe_canceled() => {
                 log::info!("transcription canceled by user; clip discarded");
@@ -677,19 +770,22 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // Set when an AI enhance is attempted but fails (offline) and we fall back to
     // the raw transcript, so the UI can tell the user their text wasn't enhanced.
     let mut enhance_failed = false;
+    // Set when the AI replied with something other than the user's words.
+    let mut enhance_rejected = false;
 
     // translate / polish / prompt run the transcript through the AI engine.
-    let cli_system: Option<String> =
-        if output_mode == "translate" && source_lang == lang_code_for(&translate_target) {
-            translate_warning = true;
-            None
-        } else {
-            enhance_system(&output_mode, &translate_target, &vocab)
-        };
+    let cli_system: Option<String> = if output_mode == "translate"
+        && Some(source_lang.as_str()) == strict_lang_code(&translate_target)
+    {
+        translate_warning = true;
+        None
+    } else {
+        cfg.system_prompt()
+    };
     if let Some(system) = cli_system {
         if has_words(&transcript.full_text) {
             let started = Instant::now();
-            match run_enhance(state, &system, &transcript.full_text, warm) {
+            match run_enhance(state, &output_mode, &system, &transcript.full_text, warm) {
                 Ok(out) => {
                     log::info!(
                         "{output_mode} enhance took {} ms",
@@ -712,27 +808,40 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                             crate::text::apply_custom_vocab(&transcript.full_text, &vocab);
                     }
                 }
-                Err(e) => {
+                Err(EnhanceErr::Rejected(why)) => {
+                    // The reply would have been typed into the user's app. Keep
+                    // their own words instead; no offline fallback, nothing failed.
+                    log::warn!("{output_mode} reply rejected, kept the raw transcript: {why}");
+                    enhance_rejected = true;
+                }
+                Err(EnhanceErr::Failed(e)) => {
                     log::warn!("{output_mode} enhance failed: {e}");
                     enhance_failed = true;
-                    // Whisper's built-in translate task can ONLY produce English,
-                    // so it is a valid offline fallback just when English is the
-                    // target. For any other target, keep the user's native words
-                    // plus the "not enhanced" warning — never silently hand back
-                    // the wrong language.
-                    if output_mode == "translate" && lang_code_for(&translate_target) == "en" {
+                    // Whisper's own translate task is an offline fallback only when
+                    // English is the target and the model can translate at all:
+                    // turbo models were trained without translation data and hand
+                    // back the source language. A result that is still mostly
+                    // Arabic letters is never passed off as English.
+                    if output_mode == "translate"
+                        && strict_lang_code(&translate_target) == Some("en")
+                        && !model.contains("turbo")
+                    {
                         if let Ok(mut t2) =
-                            state.transcribe(&audio_16k, &model, &lang_mode, true, &dialect, &vocab)
+                            state.transcribe(&audio_16k, &model, &decode_lang, true, &dialect, &vocab)
                         {
-                            t2.language = "en".to_string();
-                            if !vocab.trim().is_empty() {
-                                t2.full_text =
-                                    crate::text::apply_custom_vocab(&t2.full_text, &vocab);
+                            if crate::text::arabic_share(&t2.full_text) < 0.1 {
+                                t2.language = "en".to_string();
+                                if !vocab.trim().is_empty() {
+                                    t2.full_text =
+                                        crate::text::apply_custom_vocab(&t2.full_text, &vocab);
+                                }
+                                transcript = t2;
+                                // Offline translate still produced English, so this
+                                // isn't a raw-text fallback the user needs warning about.
+                                enhance_failed = false;
+                            } else {
+                                log::warn!("offline translate fallback came back in Arabic; kept the raw transcript");
                             }
-                            transcript = t2;
-                            // Offline translate still produced English, so this
-                            // isn't a raw-text fallback the user needs warning about.
-                            enhance_failed = false;
                         }
                     }
                     // polish / prompt: keep the native transcript (user's words).
@@ -815,6 +924,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         segments: transcript.segments,
         translate_warning,
         enhance_failed,
+        enhance_rejected,
         paste_blocked,
     }))
 }
@@ -1424,23 +1534,35 @@ mod tests {
         }
     }
 
+    fn cfg(mode: &str, language_mode: &str, target: &str, from: Option<&str>, vocab: &str) -> EnhanceCfg {
+        let s = Settings {
+            output_mode: mode.into(),
+            language_mode: language_mode.into(),
+            translate_target: target.into(),
+            translate_from: from.map(String::from),
+            custom_vocab: vocab.into(),
+            ..Settings::default()
+        };
+        EnhanceCfg::from_settings(&s)
+    }
+
     #[test]
     fn raw_mode_has_no_enhance_prompt() {
-        assert!(enhance_system("raw", "English", "").is_none());
-        assert!(enhance_system("", "English", "Nour").is_none());
+        assert!(cfg("raw", "en", "English", None, "").system_prompt().is_none());
+        assert!(cfg("", "en", "English", None, "Nour").system_prompt().is_none());
     }
 
     #[test]
     fn every_enhance_prompt_ends_with_the_output_rule() {
         for mode in ["polish", "prompt", "translate"] {
-            let s = enhance_system(mode, "English", "EchoFlow").unwrap();
+            let s = cfg(mode, "en", "English", None, "EchoFlow").system_prompt().unwrap();
             assert!(s.ends_with("never new content."), "{mode}: {s}");
         }
     }
 
     #[test]
     fn vocabulary_line_sits_before_the_final_rule() {
-        let s = enhance_system("polish", "English", "EchoFlow, Nour").unwrap();
+        let s = cfg("polish", "en", "English", None, "EchoFlow, Nour").system_prompt().unwrap();
         let vocab_at = s.find("Preserve these exact spellings").expect("vocab line");
         let rule_at = s.rfind("FINAL RULE").expect("final rule");
         assert!(vocab_at < rule_at);
@@ -1448,16 +1570,92 @@ mod tests {
     }
 
     #[test]
-    fn prompt_is_stable_for_the_same_settings() {
-        // A pre-spawned CLI is only reused when the prompt matches byte for byte,
-        // so building it twice from the same settings must give the same text.
-        assert_eq!(
-            enhance_system("polish", "English", "a, b"),
-            enhance_system("polish", "English", "a, b")
-        );
+    fn prompt_is_identical_at_record_start_and_end() {
+        // The pre-spawned CLI is reused only when both builds match byte for byte.
+        for mode in ["raw", "polish", "prompt", "translate"] {
+            for lang in ["auto", "en", "ar", "fr"] {
+                for from in [None, Some("ar"), Some("auto")] {
+                    let a = cfg(mode, lang, "English", from, "EchoFlow").system_prompt();
+                    let b = cfg(mode, lang, "English", from, "EchoFlow").system_prompt();
+                    assert_eq!(a, b, "{mode}/{lang}/{from:?}");
+                }
+            }
+        }
         assert_ne!(
-            enhance_system("translate", "English", ""),
-            enhance_system("translate", "French", "")
+            cfg("translate", "en", "English", None, "").system_prompt(),
+            cfg("translate", "en", "French", None, "").system_prompt()
         );
+    }
+
+    #[test]
+    fn selected_language_locks_the_output() {
+        let p = |mode, lang| cfg(mode, lang, "English", None, "").system_prompt().unwrap();
+        assert!(p("polish", "en").contains("ONLY IN ENGLISH"));
+        assert!(p("polish", "ar").contains("ONLY IN ARABIC"));
+        assert!(p("prompt", "en").contains("ONLY IN ENGLISH"));
+        assert!(p("polish", "auto").contains("SAME LANGUAGE"));
+        assert!(p("prompt", "fr").contains("SAME LANGUAGE"), "only English and Arabic lock");
+    }
+
+    #[test]
+    fn translate_listens_for_arabic_even_when_english_is_selected() {
+        // The user's setup: recognition English, Translate into English.
+        let s = Settings {
+            language_mode: "en".into(),
+            output_mode: "translate".into(),
+            ..Settings::default()
+        };
+        let from = effective_translate_from(&s);
+        assert_eq!(from, "ar");
+        assert_eq!(decode_language("translate", "en", &from), "ar");
+        assert_eq!(decode_language("polish", "en", &from), "en");
+        assert!(cfg("translate", "en", "English", None, "")
+            .system_prompt()
+            .unwrap()
+            .contains("from Arabic into English"));
+    }
+
+    #[test]
+    fn translate_source_default_keeps_other_setups_working() {
+        let into_arabic = Settings { translate_target: "Arabic".into(), ..Settings::default() };
+        assert_eq!(effective_translate_from(&into_arabic), "auto", "an Arabic target must not listen for Arabic");
+        let chosen = Settings { translate_from: Some("fr".into()), ..Settings::default() };
+        assert_eq!(effective_translate_from(&chosen), "fr");
+        let blank = Settings { translate_from: Some("  ".into()), ..Settings::default() };
+        assert_eq!(effective_translate_from(&blank), "ar");
+        assert_eq!(strict_lang_code("Klingon"), None);
+        assert_eq!(lang_code_for("Klingon"), "en");
+    }
+
+    #[test]
+    fn settings_saved_before_translate_from_existed_still_load() {
+        let s: Settings = serde_json::from_str(
+            r#"{"output_mode":"translate","translate_target":"English","language_mode":"en"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.translate_from, None);
+        assert_eq!(effective_translate_from(&s), "ar");
+    }
+
+    /// Writes the exact shipped prompts to ECHOFLOW_PROMPT_DIR so live checks
+    /// against the CLI test the real text. Run by hand:
+    /// `cargo test --lib dump_prompts -- --ignored`
+    #[test]
+    #[ignore]
+    fn dump_prompts() {
+        let dir = std::path::PathBuf::from(std::env::var("ECHOFLOW_PROMPT_DIR").expect("ECHOFLOW_PROMPT_DIR"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let vocab = "EchoFlow, Folowise, printmanjo";
+        for (name, mode, lang) in [
+            ("polish-en", "polish", "en"),
+            ("polish-ar", "polish", "ar"),
+            ("polish-auto", "polish", "auto"),
+            ("prompt-en", "prompt", "en"),
+            ("prompt-ar", "prompt", "ar"),
+            ("translate", "translate", "en"),
+        ] {
+            let p = cfg(mode, lang, "English", None, vocab).system_prompt().unwrap();
+            std::fs::write(dir.join(format!("{name}.txt")), p).unwrap();
+        }
     }
 }

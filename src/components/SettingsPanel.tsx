@@ -54,6 +54,33 @@ const LANGUAGES: { value: string; label: string }[] = [
   { value: "Korean", label: "한국어" },
 ];
 
+// Target name -> language code (mirrors Rust `strict_lang_code`), so "translate
+// from X into X" is never offered.
+const TARGET_CODE: Record<string, string> = {
+  English: "en",
+  Arabic: "ar",
+  French: "fr",
+  Spanish: "es",
+  German: "de",
+  Italian: "it",
+  Portuguese: "pt",
+  Dutch: "nl",
+  Turkish: "tr",
+  Russian: "ru",
+  Hindi: "hi",
+  Urdu: "ur",
+  Persian: "fa",
+  Hebrew: "he",
+  Chinese: "zh",
+  Japanese: "ja",
+  Korean: "ko",
+};
+
+// Mirrors Rust `effective_translate_from`: unset means Arabic when translating
+// into English, otherwise auto-detect.
+const translateFrom = (s: Settings) =>
+  s.translate_from ?? (TARGET_CODE[s.translate_target] === "en" ? "ar" : "auto");
+
 // API engine model picker, per provider. First entry is the default — the fast,
 // cheap model, which is the right pick for the light text cleanup the enhance
 // step does. "custom" has no list: those endpoints use their own model ids, so
@@ -421,19 +448,41 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
           </Field>
 
           {settings.output_mode === "translate" && (
-            <Field label={t("translate_to")}>
-              <select
-                value={settings.translate_target}
-                onChange={(e) => patch({ translate_target: e.target.value })}
-                className="field"
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l.value} value={l.value}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <>
+              <Field label={t("translate_from")}>
+                <select
+                  value={translateFrom(settings)}
+                  onChange={(e) => patch({ translate_from: e.target.value })}
+                  className="field"
+                >
+                  <option value="auto">{t("auto_detect")}</option>
+                  {REC_LANGS.filter((l) => l.code !== TARGET_CODE[settings.translate_target]).map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-ink-500">{t("translate_from_hint")}</p>
+              </Field>
+              <Field label={t("translate_to")}>
+                <select
+                  value={settings.translate_target}
+                  onChange={(e) => {
+                    const target = e.target.value;
+                    // Never leave "from X into X": fall back to auto-detect.
+                    const clash = TARGET_CODE[target] === translateFrom(settings);
+                    patch(clash ? { translate_target: target, translate_from: "auto" } : { translate_target: target });
+                  }}
+                  className="field"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l.value} value={l.value}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </>
           )}
 
           {settings.output_mode !== "raw" && (
@@ -706,7 +755,9 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             <p className="mt-1.5 text-xs text-ink-500">{t("language_hint")}</p>
           </Field>
 
-          {(settings.language_mode === "ar" || settings.language_mode === "auto") && (
+          {(settings.language_mode === "ar" ||
+            settings.language_mode === "auto" ||
+            (settings.output_mode === "translate" && ["ar", "auto"].includes(translateFrom(settings)))) && (
             <Field label={t("dialect")}>
               <select
                 value={settings.dialect}

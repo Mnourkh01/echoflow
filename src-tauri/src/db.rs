@@ -135,6 +135,7 @@ impl Db {
                     segments: Vec::new(),
                     translate_warning: false,
                     enhance_failed: false,
+                    enhance_rejected: false,
                     paste_blocked: false,
                 })
             },

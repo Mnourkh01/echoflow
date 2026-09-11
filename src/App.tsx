@@ -135,6 +135,8 @@ export default function App() {
         flashMic("happy");
         if (res.translate_warning) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+        } else if (res.enhance_rejected) {
+          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
         } else if (res.enhance_failed) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
         }
@@ -254,6 +256,8 @@ export default function App() {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "paste_blocked_notice"));
       } else if (e.payload.translate_warning) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
+      } else if (e.payload.enhance_rejected) {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
       } else if (e.payload.enhance_failed) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
       }

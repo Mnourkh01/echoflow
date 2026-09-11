@@ -22,6 +22,7 @@ if (isOverlay) document.documentElement.classList.add("overlay");
 // Dev-only visual harness: /?preview=mascot shows the record control with fake
 // state/level controls. Lazy so the chunk is never fetched in production.
 const MascotPreview = React.lazy(() => import("./dev/MascotPreview"));
+const SettingsPreview = React.lazy(() => import("./dev/SettingsPreview"));
 const preview = import.meta.env.DEV
   ? new URLSearchParams(window.location.search).get("preview")
   : null;
@@ -31,6 +32,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     {preview === "mascot" ? (
       <Suspense fallback={null}>
         <MascotPreview />
+      </Suspense>
+    ) : preview === "settings" ? (
+      <Suspense fallback={null}>
+        <SettingsPreview />
       </Suspense>
     ) : isOverlay ? (
       <Overlay />

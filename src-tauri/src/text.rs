@@ -213,6 +213,34 @@ fn push_word(out: &mut String, word: &str) {
 /// Split the user's vocabulary setting into clean terms (comma / newline /
 /// semicolon separated). Shared by the prompt builder, the post-correction
 /// pass, and the enhance system prompts.
+/// Share of letters in Arabic script, 0.0 when there are no letters.
+pub fn arabic_share(text: &str) -> f32 {
+    let (mut arabic, mut letters) = (0usize, 0usize);
+    for c in text.chars().filter(|c| c.is_alphabetic()) {
+        letters += 1;
+        if matches!(c, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}') {
+            arabic += 1;
+        }
+    }
+    if letters == 0 {
+        0.0
+    } else {
+        arabic as f32 / letters as f32
+    }
+}
+
+#[cfg(test)]
+mod arabic_share_tests {
+    #[test]
+    fn measures_the_arabic_part() {
+        assert_eq!(super::arabic_share("Hello there"), 0.0);
+        assert_eq!(super::arabic_share("مرحبا"), 1.0);
+        assert_eq!(super::arabic_share("..."), 0.0);
+        let mixed = super::arabic_share("send the تقرير today");
+        assert!(mixed > 0.2 && mixed < 0.5, "{mixed}");
+    }
+}
+
 pub fn vocab_terms(vocab: &str) -> Vec<&str> {
     vocab
         .split(|c| c == ',' || c == '\n' || c == ';' || c == '،' || c == '؛')

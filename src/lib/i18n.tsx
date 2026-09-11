@@ -42,12 +42,12 @@ const STRINGS = {
   mode_polish: { en: "Clean writing", ar: "تحسين الصياغة" },
   mode_prompt: { en: "Prompt mode", ar: "وضع البرومبت" },
   mode_raw_desc: {
-    en: "Write exactly what was said, in the spoken language.",
-    ar: "يكتب ما قيل تماماً وباللغة المنطوقة.",
+    en: "Writes what was said in your selected language, with no AI step, so words in another language are not translated.",
+    ar: "يكتب ما قلته باللغة التي اخترتها بدون خطوة الذكاء الاصطناعي، لذلك لا تُترجم الكلمات من لغة أخرى.",
   },
   mode_translate_desc: {
-    en: "Speak any language or Arabic dialect, get professional English. Uses the local CLI.",
-    ar: "تحدث بأي لغة أو لهجة عربية واحصل على إنجليزية احترافية. يستخدم الـCLI المحلي.",
+    en: "Speak Arabic in any dialect (English words mixed in are fine) and get clean, natural English. Uses the local CLI.",
+    ar: "تكلم بالعربي بأي لهجة (لا مشكلة في الكلمات الإنجليزية) واحصل على إنجليزية واضحة وطبيعية. يستخدم الـCLI المحلي.",
   },
   mode_polish_desc: {
     en: "Fixes grammar and wording so your speech reads like clean, natural writing, in the language you spoke. Uses the local CLI.",
@@ -64,8 +64,8 @@ const STRINGS = {
   canceled_notice: { en: "Recording discarded", ar: "تم تجاهل التسجيل" },
   cancel_recording: { en: "Cancel", ar: "إلغاء" },
   translate_warning_notice: {
-    en: "Still on Translate. You spoke the target language, so your words are kept as is.",
-    ar: "ما زلت في وضع الترجمة. تحدثت باللغة الهدف، لذا عُرضت كلماتك كما هي.",
+    en: "Still on Translate. What you said is already in the target language, so it was kept as is.",
+    ar: "ما زلت في وضع الترجمة. ما قلته باللغة الهدف أصلاً، لذا أُبقي كما هو.",
   },
   enhance_offline_notice: {
     en: "No connection, AI step skipped. Showing your raw words.",
@@ -126,6 +126,15 @@ const STRINGS = {
     ar: "اضغط اختبار وتحدث: يجب أن يتحرك الشريط. اختر الميكروفون أو السماعة التي تريدها.",
   },
   translate_to: { en: "Translate into", ar: "الترجمة إلى" },
+  translate_from: { en: "Translate from", ar: "الترجمة من" },
+  translate_from_hint: {
+    en: "EchoFlow listens only for this language, so a few words from another language never switch it.",
+    ar: "يستمع EchoFlow لهذه اللغة فقط، فبعض الكلمات من لغة أخرى لا تغيّرها.",
+  },
+  enhance_rejected_notice: {
+    en: "The AI reply didn't look like your words, so your original text was kept.",
+    ar: "رد الذكاء الاصطناعي لم يكن كلامك، فأبقينا نصك الأصلي.",
+  },
   model: { en: "Model", ar: "النموذج" },
   model_hint: {
     en: "Larger models are more accurate for Arabic but slower.",
@@ -358,8 +367,8 @@ const STRINGS = {
 
   // Recognition language + diacritics
   language_hint: {
-    en: "Force a language, or Auto to detect it. European languages keep their accents.",
-    ar: "افرض لغة، أو اختر تلقائي لكشفها. اللغات الأوروبية تحتفظ بعلاماتها.",
+    en: "The language you speak. Clean writing and Prompt mode always write English or Arabic when you pick it, translating stray words. Auto follows whatever you speak.",
+    ar: "اللغة التي تتكلم بها. عند اختيار الإنجليزية أو العربية يكتب تحسين الصياغة ووضع البرومبت بها دائماً ويترجمان الكلمات الأخرى. التلقائي يتبع ما تتكلم به.",
   },
   restore_diacritics: { en: "Restore accents (café, résumé)", ar: "استعادة العلامات (café، résumé)" },
   restore_diacritics_desc: {

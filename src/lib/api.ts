@@ -25,6 +25,9 @@ export interface RecordingResult {
   // True when an AI enhance step (clean/translate/prompt) failed (usually offline)
   // and the app fell back to the raw transcript.
   enhance_failed?: boolean;
+  // True when the AI reply did not look like the user's words (it answered or
+  // talked about the task), so the raw transcript was kept instead.
+  enhance_rejected?: boolean;
   // True when auto-type couldn't reach the origin field (window gone, or an admin
   // window blocking input). Text was left on the clipboard instead.
   paste_blocked?: boolean;
@@ -69,6 +72,7 @@ export interface Settings {
   noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;
+  translate_from: string | null; // Translate source code; null = Arabic when the target is English, else auto
   restore_diacritics: boolean;
   voice_commands: boolean; // raw mode: spoken "new line"/"period"/... -> real punctuation
   ai_engine: "cli" | "api";
