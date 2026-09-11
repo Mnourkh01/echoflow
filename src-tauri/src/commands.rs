@@ -31,13 +31,10 @@ const KNOWN_MODELS: [&str; 7] = [
     "large-v3",
 ];
 
-/// Below this raw RMS the clip is treated as silence (a mis-click) and discarded.
-/// Kept deliberately low so whispered / very quiet speech still gets through;
-/// loudness normalization (audio.rs) then lifts it to a level Whisper can read.
-const SILENCE_RMS: f32 = 0.0010;
 /// Peak level that counts as someone actually speaking (for the silence guard).
-/// Low enough that a whisper trips it, high enough to ignore room tone.
-const SPEECH_LEVEL: f32 = 0.012;
+/// Soft speech on a noise-cancelling mic peaks around 0.004-0.01 (measured), so
+/// the old 0.012 cancelled whispered takes; that mic's silence stays near 0.001.
+const SPEECH_LEVEL: f32 = 0.003;
 /// If no speech is heard within this long after starting, auto-cancel.
 const NO_SPEECH_GRACE: Duration = Duration::from_secs(15);
 
@@ -609,7 +606,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
 
     // Silent mis-click: nothing was actually said. Discard quietly — no
     // transcription, no saved row, no auto-type.
-    if audio::rms_level(&captured) < SILENCE_RMS {
+    if !audio::speech_present(&captured) {
         log::info!("discarded recording: no speech detected");
         return Ok(None);
     }

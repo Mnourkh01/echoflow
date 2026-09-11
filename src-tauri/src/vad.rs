@@ -29,7 +29,7 @@ pub(crate) fn frame_rms(frame: &[f32]) -> f32 {
 }
 
 /// Value at percentile `p` (0..1) of `v`. Used to estimate the noise floor.
-fn percentile(v: &[f32], p: f32) -> f32 {
+pub(crate) fn percentile(v: &[f32], p: f32) -> f32 {
     if v.is_empty() {
         return 0.0;
     }
@@ -70,14 +70,18 @@ pub fn trim_to_speech(samples: &[f32]) -> Vec<f32> {
         return samples.to_vec(); // basically silent; leave it for the caller's gate
     }
 
-    // Threshold sits above the noise floor but well below the peak, so quiet
-    // speech still counts as voiced. The three terms guard each failure mode:
-    // a noisy floor, a quiet clip, and a near-silent floor. The peak term is
-    // low (8%) because one loud plosive must never push soft word endings and
-    // trailing syllables below the line — losing spoken words is a far worse
-    // failure than keeping a little extra silence.
+    // Threshold sits above the noise floor but well below the speech level, so
+    // quiet speech still counts as voiced. The three terms guard a noisy floor,
+    // a loud clip, and a near-silent floor. The speech level is the 95th
+    // percentile frame, not the max, so one loud syllable can never lift the
+    // line over the soft words around it. The absolute floor is low (4e-4 RMS,
+    // measured before normalization): at 3e-3 a soft talker on a
+    // noise-cancelling mic kept 1.4 s of a 6.3 s clip, and "what model are you
+    // using right now" came out "what hotel are you". Losing spoken words is a
+    // far worse failure than keeping a little extra silence.
     let floor = percentile(&rms, 0.2);
-    let thresh = (floor * 2.5).max(peak * 0.08).max(3e-3);
+    let loud = percentile(&rms, 0.95);
+    let thresh = (floor * 2.5).max(loud * 0.08).max(4e-4);
 
     let voiced = dilate(&rms.iter().map(|&r| r >= thresh).collect::<Vec<_>>(), HANGOVER);
     let first = match voiced.iter().position(|&v| v) {
@@ -143,6 +147,20 @@ mod tests {
     fn leaves_pure_silence_alone() {
         let audio = vec![0.0f32; 32_000];
         assert_eq!(trim_to_speech(&audio).len(), audio.len());
+    }
+
+    #[test]
+    fn keeps_quiet_speech_around_one_loud_syllable() {
+        // A soft talker on a noise-cancelling mic: near-silent floor, speech at
+        // RMS ~0.0014 and one normal-volume syllable. The quiet words around it
+        // must survive; losing them is the "I have to speak up" bug.
+        let mut audio = tone(8_000, 1e-4);
+        audio.extend(tone(16_000, 0.002));
+        audio.extend(tone(1_600, 0.05));
+        audio.extend(tone(16_000, 0.002));
+        audio.extend(tone(8_000, 1e-4));
+        let trimmed = trim_to_speech(&audio);
+        assert!(trimmed.len() >= 33_600, "kept {} of 33600 speech samples", trimmed.len());
     }
 
     #[test]

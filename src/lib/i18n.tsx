@@ -318,8 +318,8 @@ const STRINGS = {
   },
   noise_suppression: { en: "Noise suppression", ar: "كبح الضوضاء" },
   noise_suppression_desc: {
-    en: "Clean background noise (fans, traffic, hum) from the mic before transcribing, so your voice comes through clearly. Recommended.",
-    ar: "ينظّف ضوضاء الخلفية (مراوح، ضجيج، طنين) من الميكروفون قبل التحويل ليصل صوتك بوضوح. مُستحسن.",
+    en: "Removes steady background noise (fans, traffic, hum) before transcribing. Only for noisy rooms: if your mic already cancels noise, leave it off, because it can cut soft or whispered words.",
+    ar: "يزيل الضوضاء الثابتة في الخلفية (مراوح، ضجيج، طنين) قبل التحويل. للأماكن الصاخبة فقط: إذا كان الميكروفون يلغي الضوضاء بنفسه فاتركه مغلقاً، لأنه قد يقطع الكلام الهادئ أو الهمس.",
   },
   app_language: { en: "App language", ar: "لغة التطبيق" },
 

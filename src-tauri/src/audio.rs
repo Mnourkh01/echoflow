@@ -163,6 +163,23 @@ pub fn rms_level(captured: &CapturedAudio) -> f32 {
 }
 
 /// Average all channels into one.
+/// Whether the raw capture holds speech at all, judged on 30 ms frames of the
+/// mono signal: the loud frames (95th percentile) must be plainly audible, or
+/// stand 2.5x above the room floor (20th percentile). A whole-clip RMS gate of
+/// 0.0010 threw away whispered dictation that Whisper could still read
+/// (measured at raw RMS 0.0005); 3.5x still dropped it over a normal mic floor.
+pub fn speech_present(captured: &CapturedAudio) -> bool {
+    let mono = to_mono(&captured.samples, captured.channels);
+    let frame = (captured.sample_rate as usize * 30 / 1000).max(1);
+    let rms: Vec<f32> = mono.chunks(frame).map(crate::vad::frame_rms).collect();
+    if rms.is_empty() {
+        return false;
+    }
+    let floor = crate::vad::percentile(&rms, 0.2);
+    let loud = crate::vad::percentile(&rms, 0.95);
+    loud >= 0.0010 || (loud >= 0.000_25 && loud >= floor * 2.5)
+}
+
 pub fn to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return samples.to_vec();
@@ -346,4 +363,58 @@ pub fn prepare_for_whisper(captured: &CapturedAudio, denoise: bool) -> Vec<f32> 
         out.resize(min_len, 0.0);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(parts: &[(usize, f32)]) -> CapturedAudio {
+        let mut samples = Vec::new();
+        for &(n, amp) in parts {
+            samples.extend((0..n).map(|i| amp * (i as f32 * 0.2).sin()));
+        }
+        CapturedAudio { samples, sample_rate: 16_000, channels: 1 }
+    }
+
+    #[test]
+    fn silence_and_room_floors_are_not_speech() {
+        assert!(!speech_present(&clip(&[(32_000, 0.0)])));
+        assert!(!speech_present(&clip(&[(32_000, 1.4e-4)])), "noise-cancelling mic floor");
+        assert!(!speech_present(&clip(&[(32_000, 8.5e-4)])), "steady fan noise");
+    }
+
+    #[test]
+    fn whispered_dictation_is_speech() {
+        // Quiet floor, then speech at raw RMS ~0.0005. The whole-clip RMS is
+        // under the old 0.0010 gate, so this clip used to be thrown away.
+        let c = clip(&[(8_000, 1.4e-4), (24_000, 7e-4), (8_000, 1.4e-4)]);
+        assert!(rms_level(&c) < 0.0010);
+        assert!(speech_present(&c));
+    }
+
+    #[test]
+    fn quiet_speech_over_a_normal_mic_floor_is_speech() {
+        // Mirrors the replay case that 3.5x dropped: syllables at RMS ~0.0008
+        // with noise at RMS ~0.0003 between them.
+        let mut seed: u32 = 7;
+        let mut noise = |amp: f32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * amp
+        };
+        let mut samples: Vec<f32> = (0..16_000).map(|_| noise(5e-4)).collect();
+        for _ in 0..12 {
+            samples.extend((0..2_400).map(|i| 0.0011 * (i as f32 * 0.2).sin() + noise(5e-4)));
+            samples.extend((0..1_600).map(|_| noise(5e-4)));
+        }
+        samples.extend((0..16_000).map(|_| noise(5e-4)));
+        let c = CapturedAudio { samples, sample_rate: 16_000, channels: 1 };
+        assert!(rms_level(&c) < 0.0010, "the old whole-clip gate would have dropped it");
+        assert!(speech_present(&c));
+    }
+
+    #[test]
+    fn normal_speech_is_speech() {
+        assert!(speech_present(&clip(&[(8_000, 0.0), (16_000, 0.1), (8_000, 0.0)])));
+    }
 }
