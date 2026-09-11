@@ -431,7 +431,7 @@ fn dialect_prompt(dialect: &str) -> &'static str {
 /// labelled meta-line like "Vocabulary: ..." reads as foreign text and biases
 /// far less than the terms appearing plainly. The cap cuts at a term boundary
 /// so a truncated list never ends mid-name.
-fn build_initial_prompt(language: &str, translate: bool, dialect: &str, vocab: &str) -> Option<String> {
+pub(crate) fn build_initial_prompt(language: &str, translate: bool, dialect: &str, vocab: &str) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if language == "ar" && !translate {
         parts.push(dialect_prompt(dialect).to_string());

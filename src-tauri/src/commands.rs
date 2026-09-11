@@ -35,6 +35,10 @@ const KNOWN_MODELS: [&str; 7] = [
 /// Soft speech on a noise-cancelling mic peaks around 0.004-0.01 (measured), so
 /// the old 0.012 cancelled whispered takes; that mic's silence stays near 0.001.
 const SPEECH_LEVEL: f32 = 0.003;
+/// Below this whole-clip raw RMS, a decode that is only a stock Whisper phrase
+/// or its own prompt is treated as silence (see `text::is_silence_artifact`).
+/// The lower speech gates let more near-silent clips reach Whisper.
+const QUIET_CLIP_RMS: f32 = 0.004;
 /// If no speech is heard within this long after starting, auto-cancel.
 const NO_SPEECH_GRACE: Duration = Duration::from_secs(15);
 
@@ -698,6 +702,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         log::info!("discarded recording: no speech detected");
         return Ok(None);
     }
+    let raw_rms = audio::rms_level(&captured);
 
     let frames = if captured.channels > 0 {
         captured.samples.len() / captured.channels as usize
@@ -750,6 +755,16 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         };
     // Language the user actually spoke (detected in auto mode, or the forced code).
     let source_lang = transcript.language.clone();
+
+    // A quiet clip that decodes to a stock Whisper phrase or to its own prompt
+    // (the Arabic dialect prime, the vocabulary list) held no speech.
+    let whisper_prompt = crate::whisper::build_initial_prompt(&source_lang, false, &dialect, &vocab);
+    if raw_rms < QUIET_CLIP_RMS
+        && crate::text::is_silence_artifact(&transcript.full_text, whisper_prompt.as_deref())
+    {
+        log::info!("discarded recording: silence artifact {:?}", transcript.full_text);
+        return Ok(None);
+    }
 
     // Custom vocabulary: fix the exact spelling/casing of the user's terms in
     // the decoded text (the initial prompt only biases; this pass corrects).

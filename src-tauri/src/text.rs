@@ -213,6 +213,74 @@ fn push_word(out: &mut String, word: &str) {
 /// Split the user's vocabulary setting into clean terms (comma / newline /
 /// semicolon separated). Shared by the prompt builder, the post-correction
 /// pass, and the enhance system prompts.
+/// Phrases Whisper produces on near-silence (subtitle credits and video outros
+/// from its training data; openai/whisper discussions 2608 and 1150).
+const SILENCE_PHRASES: &[&str] = &[
+    "thank you for watching",
+    "thanks for watching",
+    "please subscribe",
+    "subtitles by the amara.org community",
+    "ترجمة نانسي قنقر",
+    "اشتركوا في القناة",
+    "شكرا للمشاهدة",
+    "شكراً للمشاهدة",
+];
+
+fn normalize_words(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// True when a decode is one of Whisper's silence hallucinations: a stock
+/// phrase, or a leak of its own initial prompt (the dialect prime or the
+/// vocabulary list). A single word never counts as a leak, so saying one
+/// vocabulary term survives. Callers only ask for quiet clips, so a user who
+/// really says one of these at normal volume keeps it.
+pub fn is_silence_artifact(text: &str, initial_prompt: Option<&str>) -> bool {
+    let t = normalize_words(text);
+    if t.is_empty() {
+        return false;
+    }
+    if SILENCE_PHRASES.iter().any(|p| normalize_words(p) == t) {
+        return true;
+    }
+    match initial_prompt {
+        Some(prompt) if t.split(' ').count() >= 2 => {
+            format!(" {} ", normalize_words(prompt)).contains(&format!(" {t} "))
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod silence_artifact_tests {
+    use super::is_silence_artifact;
+
+    #[test]
+    fn stock_phrases_are_artifacts() {
+        assert!(is_silence_artifact("Thank you for watching!", None));
+        assert!(is_silence_artifact("thanks for watching.", None));
+        assert!(is_silence_artifact("ترجمة نانسي قنقر", None));
+        assert!(!is_silence_artifact("Thank you.", None), "a real short thanks stays");
+    }
+
+    #[test]
+    fn a_leaked_prompt_is_an_artifact_but_one_term_is_not() {
+        let prime = "محادثة يومية بالعربية العامية. شلونك؟ إزيك يا باشا؟ شو أخبارك؟";
+        assert!(is_silence_artifact("شلونك؟ إزيك يا باشا؟", Some(prime)));
+        let vocab = "EchoFlow, Folowise, printmanjo.";
+        assert!(is_silence_artifact("EchoFlow, Folowise.", Some(vocab)));
+        assert!(!is_silence_artifact("EchoFlow.", Some(vocab)));
+        assert!(!is_silence_artifact("Send it to Folowise today.", Some(vocab)));
+        assert!(!is_silence_artifact("", Some(vocab)));
+    }
+}
+
 /// Share of letters in Arabic script, 0.0 when there are no letters.
 pub fn arabic_share(text: &str) -> f32 {
     let (mut arabic, mut letters) = (0usize, 0usize);
