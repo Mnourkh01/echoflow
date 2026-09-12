@@ -6,6 +6,7 @@ import type { RecordingResult } from "../lib/api";
 import { api } from "../lib/api";
 import { dirFor, fontFor, langName, fmtDuration } from "../lib/format";
 import { useT } from "../lib/i18n";
+import { modelLabel } from "../lib/models";
 
 interface Props {
   rec: RecordingResult | null;
@@ -63,8 +64,11 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
           <Clock className="h-3.5 w-3.5" />
           {fmtDuration(rec.duration_ms)}
         </span>
-        <span className="rounded-full border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-xs text-ink-500">
-          {rec.model}
+        <span
+          className="rounded-full border border-white/[0.06] bg-white/[0.04] px-2.5 py-1 text-xs text-ink-500"
+          title={rec.model}
+        >
+          {modelLabel(rec.model, t)}
         </span>
 
         <div className="ms-auto flex items-center gap-1.5">

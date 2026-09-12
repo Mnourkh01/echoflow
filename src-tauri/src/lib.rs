@@ -382,6 +382,7 @@ pub fn run() {
             commands::list_models,
             commands::download_model,
             commands::delete_model,
+            commands::set_model,
             commands::get_usage,
             commands::reset_usage,
             commands::app_status,

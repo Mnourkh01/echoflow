@@ -1502,11 +1502,66 @@ pub fn download_model(app: AppHandle, state: State<AppState>, name: String) -> R
 /// Delete a downloaded model from the app-data models dir (never the bundled dev copy).
 #[tauri::command]
 pub fn delete_model(state: State<AppState>, name: String) -> R<()> {
-    let path = state.paths.model_dirs[0].join(AppPaths::model_file_name(&name));
+    remove_model_file(&state, &name)
+}
+
+/// Reads the live settings, not the UI's copy, so a stale panel can never delete
+/// the model the next dictation needs.
+fn remove_model_file(state: &AppState, name: &str) -> R<()> {
+    if !KNOWN_MODELS.contains(&name) {
+        return Err(format!("unknown model '{name}'"));
+    }
+    if state.settings.read().model == name {
+        return Err("this model is in use, switch to another model first".into());
+    }
+    let path = state.paths.model_dirs[0].join(AppPaths::model_file_name(name));
     if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        // os error 32 means Windows still holds the file (a model load, or an
+        // antivirus scan right after a download); it clears within seconds.
+        std::fs::remove_file(&path).map_err(|e| {
+            log::warn!("could not delete model '{name}': {e}");
+            format!("could not delete the model file, try again in a moment ({e})")
+        })?;
+        log::info!("model '{name}' deleted");
+    }
+    if let Some(other) = state.paths.find_model(name) {
+        return Err(format!(
+            "another copy of this model is at {}, EchoFlow only deletes models it downloaded",
+            other.display()
+        ));
     }
     Ok(())
+}
+
+/// Switch the speech model without rewriting any other setting. The first-run
+/// picker and the Settings "Use" button come here instead of `update_settings`,
+/// which saves the caller's whole (possibly default or stale) copy, marks it
+/// trusted and runs the retention purge.
+#[tauri::command]
+pub fn set_model(app: AppHandle, state: State<AppState>, name: String) -> R<()> {
+    let settings = apply_model(&state, &name)?;
+    let _ = app.emit("settings-changed", settings);
+    Ok(())
+}
+
+fn apply_model(state: &AppState, name: &str) -> R<Settings> {
+    if !KNOWN_MODELS.contains(&name) {
+        return Err(format!("unknown model '{name}'"));
+    }
+    if !state.paths.model_present(name) {
+        return Err(format!("model '{name}' is not downloaded"));
+    }
+    let mut current = state.settings.write();
+    let mut next = current.clone();
+    next.model = name.to_string();
+    // Untrusted settings are defaults standing in for an unreadable row: switch
+    // for this session only, never write them over that row.
+    if state.settings_trusted() {
+        state.db.save_settings(&next).map_err(|e| e.to_string())?;
+    }
+    *current = next.clone();
+    log::info!("speech model set to '{name}'");
+    Ok(next)
 }
 
 #[cfg(test)]
@@ -1671,6 +1726,54 @@ mod tests {
         ] {
             let p = cfg(mode, lang, "English", None, vocab).system_prompt().unwrap();
             std::fs::write(dir.join(format!("{name}.txt")), p).unwrap();
+        }
+    }
+
+    #[test]
+    fn remove_model_file_keeps_the_model_in_use_and_refuses_unknown_names() {
+        let state = temp_state(0, true);
+        let file = |n: &str| state.paths.model_dirs[0].join(AppPaths::model_file_name(n));
+        for n in ["tiny", "medium"] {
+            std::fs::write(file(n), b"ggml").unwrap();
+        }
+        state.settings.write().model = "tiny".into();
+
+        assert!(remove_model_file(&state, "../voice").is_err());
+        assert!(remove_model_file(&state, "tiny").is_err(), "the model in use stays");
+        assert!(file("tiny").exists());
+
+        remove_model_file(&state, "medium").unwrap();
+        assert!(!file("medium").exists());
+        remove_model_file(&state, "medium").unwrap(); // already gone: a no-op
+    }
+
+    #[test]
+    fn apply_model_changes_only_the_model_and_never_purges() {
+        for trusted in [true, false] {
+            let state = temp_state(7, trusted);
+            let stored = state.db.load_settings().0;
+            let model = state.paths.model_dirs[0].join(AppPaths::model_file_name("tiny"));
+            std::fs::write(&model, b"ggml").unwrap();
+            let wav = state.paths.new_audio_path(1);
+            std::fs::write(&wav, b"RIFF").unwrap();
+            let old = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+            let id = state
+                .db
+                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[])
+                .unwrap();
+
+            assert!(apply_model(&state, "medium").is_err(), "not downloaded");
+            assert_eq!(apply_model(&state, "tiny").unwrap().model, "tiny");
+
+            assert_eq!(state.settings.read().model, "tiny");
+            assert_eq!(state.settings_trusted(), trusted, "trust is never flipped");
+            assert!(state.db.get_recording(id).is_ok() && wav.exists(), "no purge");
+            let saved = state.db.load_settings().0.model;
+            if trusted {
+                assert_eq!(saved, "tiny");
+            } else {
+                assert_eq!(saved, stored.model, "an unreadable row is never overwritten");
+            }
         }
     }
 }

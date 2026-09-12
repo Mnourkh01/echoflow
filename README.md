@@ -27,7 +27,7 @@ EchoFlow updates itself; new versions are downloaded and applied in place.
 - **History + prompts.** Every transcript is saved locally, searchable, and exportable to
   `.txt`, `.srt`, or `.docx`. Pin the ones you want to keep; save reusable prompts.
 - **Right-to-left** rendering and an Arabic font for Arabic transcripts.
-- **Guided onboarding** on first run, with a one-click model download.
+- **Guided onboarding** on first run: pick a speech model (plain names, one line on what each is good for) and download it once.
 - **Quiet-speech friendly.** Loudness normalization + noise suppression so even a whisper
   is picked up.
 
@@ -49,7 +49,8 @@ npm run tauri dev      # development with hot reload
 npm run tauri build    # release bundle
 ```
 
-A Whisper GGML model is downloaded on first run into app-data and kept across updates. For
+On first run you choose which Whisper GGML model to download; it lands in app-data and is kept
+across updates. Settings can download more, switch, and delete any model not in use. For
 local engine tests, drop `ggml-small.bin` (and `jfk.wav`) into `src-tauri/models/`:
 
 ```bash

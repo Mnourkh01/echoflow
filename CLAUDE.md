@@ -123,7 +123,13 @@ and already installed on this machine.
 - Esc / the X button cancels a take: while recording it discards the clip;
   while transcribing it aborts the decode via the whisper abort callback.
 - `?preview=mascot` on the Vite dev server shows a browser-only harness for the
-  record control (dev builds only).
+  record control (dev builds only). `?preview=first-run` does the same for the
+  first-run model picker (`&lang=ar`, `&present=small`, `&fail=download|set_model`).
+- Model catalog (friendly names, one-line descriptions, sizes, the recommended
+  pick) lives in `src/lib/models.ts` + i18n; ids stay the ggml file names and the
+  Rust `KNOWN_MODELS` allowlist. Switching models goes through `set_model`
+  (changes only `model`, never purges, saves only trusted settings), never
+  `update_settings`. `delete_model` refuses the model in use.
 
 ## Phases
 

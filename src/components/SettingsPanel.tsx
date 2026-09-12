@@ -1,35 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { X, Trash2, AlertTriangle, RefreshCw, Volume2, ShieldCheck } from "lucide-react";
 import type { ApiUsage, DownloadEnd, DownloadProgress, ModelInfo, OutputMode, Settings } from "../lib/api";
 import { api } from "../lib/api";
+import { MODEL_CATALOG, RECOMMENDED_MODEL, fmtSize } from "../lib/models";
 import { checkForUpdate, installUpdate } from "../lib/updater";
 import { translate, type Lang, type StringKey } from "../lib/i18n";
 import { previewSound, SOUND_PACKS } from "../lib/sound";
 import { PALETTES, applyAccent } from "../lib/theme";
 
-// Model order + approximate download sizes (MB) shown before a model is present.
-const KNOWN_MODELS = [
-  "tiny",
-  "base",
-  "small",
-  "medium",
-  "large-v3-turbo-q5_0",
-  "large-v3-turbo",
-  "large-v3",
-] as const;
-const MODEL_MB: Record<string, number> = {
-  tiny: 74,
-  base: 141,
-  small: 465,
-  medium: 1462,
-  "large-v3-turbo-q5_0": 547,
-  "large-v3-turbo": 1549,
-  "large-v3": 2952,
-};
-const fmtSize = (mb: number) =>
-  mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 const pct = (p: DownloadProgress) =>
   p.total > 0 ? Math.min(100, Math.floor((p.downloaded / p.total) * 100)) : 0;
 
@@ -168,6 +148,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
   const [testLevel, setTestLevel] = useState(0);
   const [usage, setUsage] = useState<ApiUsage | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const [version, setVersion] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -189,6 +170,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
     api.isElevated().then(setElevated).catch(() => setElevated(false));
     getVersion().then(setVersion).catch(() => {});
     setConfirmClear(false);
+    setConfirmDelete(null);
     setCleared(false);
     setUpdateMsg(null);
     refreshModels();
@@ -301,7 +283,21 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
   }
 
   function removeModel(name: string) {
-    api.deleteModel(name).then(refreshModels).catch((e) => setWarn(String(e)));
+    setConfirmDelete(null);
+    api
+      .deleteModel(name)
+      .catch((e) => setWarn(String(e)))
+      .finally(refreshModels);
+  }
+
+  // Applies at once, like Download and Delete, so the old model can be deleted
+  // right after switching. The draft follows so a later Save keeps the choice.
+  function switchModel(name: string) {
+    setWarn(null);
+    api
+      .setModel(name)
+      .then(() => patch({ model: name }))
+      .catch((e) => setWarn(String(e)));
   }
 
   async function clearHistory() {
@@ -666,29 +662,44 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             <p className="mt-1 text-xs text-ink-500">{t("mic_test_hint")}</p>
           </Field>
 
-          <Field label={t("model")}>
+          <FieldGroup label={t("model")}>
             <div className="space-y-1.5">
-              {KNOWN_MODELS.map((m) => {
+              {MODEL_CATALOG.map(({ id: m, mb, name, desc }) => {
                 const info = models.find((x) => x.name === m);
                 const present = info?.present ?? false;
                 const active = settings.model === m;
                 const prog = progress[m];
-                const sizeMb = present && info && info.size_mb > 0 ? info.size_mb : MODEL_MB[m] ?? 0;
+                const confirming = confirmDelete === m;
+                const sizeMb = present && info && info.size_mb > 0 ? info.size_mb : mb;
                 return (
                   <div
                     key={m}
                     className="flex items-center gap-2 rounded-xl border border-white/[0.05] bg-white/[0.04] px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-ink-100">{m}</span>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="text-sm text-ink-100" title={m}>
+                          {t(name)}
+                        </span>
+                        <span className="text-xs tabular-nums text-ink-500">{fmtSize(sizeMb)}</span>
                         {active && (
                           <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">
                             {t("in_use")}
                           </span>
                         )}
+                        {m === RECOMMENDED_MODEL && (
+                          <span className="rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] text-ink-300">
+                            {t("recommended")}
+                          </span>
+                        )}
                       </div>
-                      <span className="text-xs text-ink-500">{fmtSize(sizeMb)}</span>
+                      <p className="mt-0.5 text-xs text-ink-500">{t(desc)}</p>
+                      {confirming && (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-300">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          {t("model_delete_q")}
+                        </p>
+                      )}
                       {prog && (
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                           <div
@@ -703,26 +714,43 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                         <span className="text-xs tabular-nums text-ink-400">
                           {pct(prog)}%
                         </span>
+                      ) : confirming ? (
+                        // Cancel takes the trash button's spot and focus, so a
+                        // double click or a second Enter can never confirm.
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => removeModel(m)}
+                            className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-500"
+                          >
+                            {t("delete")}
+                          </button>
+                          <button
+                            autoFocus
+                            onClick={() => setConfirmDelete(null)}
+                            className="rounded-md px-2.5 py-1 text-xs text-ink-400 hover:text-white"
+                          >
+                            {t("cancel")}
+                          </button>
+                        </div>
                       ) : present ? (
-                        <>
-                          {!active && (
+                        !active && (
+                          <>
                             <button
-                              onClick={() => patch({ model: m })}
+                              onClick={() => switchModel(m)}
                               className="rounded-lg border border-white/[0.08] bg-white/[0.06] px-2.5 py-1 text-xs text-ink-200 hover:text-white"
                             >
                               {t("use_model")}
                             </button>
-                          )}
-                          {!active && m !== "small" && (
                             <button
-                              onClick={() => removeModel(m)}
+                              onClick={() => setConfirmDelete(m)}
                               className="tool-btn"
                               title={t("delete")}
+                              aria-label={`${t("delete")} ${t(name)}`}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
-                          )}
-                        </>
+                          </>
+                        )
                       ) : (
                         <button
                           onClick={() => startDownload(m)}
@@ -737,7 +765,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               })}
             </div>
             <p className="mt-1.5 text-xs text-ink-500">{t("bigger_better_arabic")}</p>
-          </Field>
+          </FieldGroup>
 
           <Field label={t("language")}>
             <select
@@ -1157,6 +1185,20 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="mb-1.5 block text-sm text-ink-300">{label}</span>
       {children}
     </label>
+  );
+}
+
+// Field for a list of buttons. A <label> forwards any click on its text to the
+// first button inside it (clicking a model's description started a download).
+function FieldGroup({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  return (
+    <div role="group" aria-labelledby={id}>
+      <span id={id} className="mb-1.5 block text-sm text-ink-300">
+        {label}
+      </span>
+      {children}
+    </div>
   );
 }
 

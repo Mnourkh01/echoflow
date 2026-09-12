@@ -23,6 +23,7 @@ if (isOverlay) document.documentElement.classList.add("overlay");
 // state/level controls. Lazy so the chunk is never fetched in production.
 const MascotPreview = React.lazy(() => import("./dev/MascotPreview"));
 const SettingsPreview = React.lazy(() => import("./dev/SettingsPreview"));
+const FirstRunPreview = React.lazy(() => import("./dev/FirstRunPreview"));
 const preview = import.meta.env.DEV
   ? new URLSearchParams(window.location.search).get("preview")
   : null;
@@ -36,6 +37,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     ) : preview === "settings" ? (
       <Suspense fallback={null}>
         <SettingsPreview />
+      </Suspense>
+    ) : preview === "first-run" ? (
+      <Suspense fallback={null}>
+        <FirstRunPreview />
       </Suspense>
     ) : isOverlay ? (
       <Overlay />

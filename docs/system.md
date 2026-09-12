@@ -32,6 +32,7 @@ flowchart LR
 | `export_recording` | write .txt / .srt / .docx to a chosen path |
 | `get_settings` / `update_settings` | persisted settings + hotkey re-register |
 | `list_models` / `app_status` | which models are present, backend info |
+| `set_model` / `delete_model` | switch the model without rewriting other settings; delete any downloaded model except the one in use |
 
 ## Data flow on stop
 

@@ -346,6 +346,13 @@ export default function App() {
   }, [flashMic]);
 
   // Mark the first-run walkthrough as seen (skip or finish), persist it.
+  // Errors reach FirstRunModel, which shows them and offers a retry. App settings
+  // follow through the settings-changed event that set_model emits.
+  const finishFirstRun = useCallback(async (model: string) => {
+    await api.setModel(model);
+    setStatus(await api.appStatus());
+  }, []);
+
   const completeOnboarding = useCallback(async () => {
     if (!settingsRef.current) return;
     const next = { ...settingsRef.current, onboarded: true };
@@ -497,11 +504,7 @@ export default function App() {
         )}
       </main>
 
-      {status && !status.model_present && (
-        <FirstRunModel
-          onReady={() => api.appStatus().then(setStatus).catch(() => {})}
-        />
-      )}
+      {status && !status.model_present && <FirstRunModel onReady={finishFirstRun} />}
 
       {status?.model_present && settings && !settings.onboarded && (
         <Onboarding onClose={completeOnboarding} />

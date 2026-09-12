@@ -1,8 +1,15 @@
 import { useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import SettingsPanel from "../components/SettingsPanel";
 import { I18nProvider } from "../lib/i18n";
 import type { Settings } from "../lib/api";
+import { fakeDownload, mockModels } from "./mockModels";
+
+const params = new URLSearchParams(window.location.search);
+const lang = params.get("lang") === "ar" ? "ar" : "en";
+const fail = params.get("fail");
+const models = mockModels(["small", "large-v3-turbo-q5_0"]);
 
 // A real-world setup: English recognition, Translate into English, and no
 // translate source chosen yet, so the panel must show Arabic as the source.
@@ -37,7 +44,7 @@ const settings: Settings = {
   api_key: "",
   api_model: "",
   api_base_url: "",
-  ui_lang: "en",
+  ui_lang: lang,
   always_admin: false,
   theme: "dark",
   retention_days: 7,
@@ -53,16 +60,31 @@ mockIPC(
       case "update_settings":
         Object.assign(settings, (payload as { settings: Settings }).settings);
         console.info("update_settings", JSON.stringify({
+          model: settings.model,
+          custom_vocab: settings.custom_vocab,
           translate_from: settings.translate_from,
           translate_target: settings.translate_target,
           retention_days: settings.retention_days,
         }));
         return true;
       case "list_models":
-        return [
-          { name: "large-v3-turbo-q5_0", present: true, size_mb: 547 },
-          { name: "small", present: false, size_mb: 466 },
-        ];
+        return models.map((m) => ({ ...m }));
+      case "set_model": {
+        if (fail === "set_model") throw "could not save the model choice";
+        settings.model = (payload as { name: string }).name;
+        setTimeout(() => emit("settings-changed", { ...settings }), 0);
+        return null;
+      }
+      case "delete_model": {
+        const name = (payload as { name: string }).name;
+        if (name === settings.model) throw "this model is in use, switch to another model first";
+        const m = models.find((x) => x.name === name);
+        if (m) m.present = false;
+        return null;
+      }
+      case "download_model":
+        fakeDownload((payload as { name: string }).name, models, fail === "download");
+        return null;
       case "list_input_devices":
         return ["Headset microphone"];
       case "get_usage":
@@ -81,12 +103,13 @@ mockIPC(
 /**
  * Dev-only harness (`npm run dev` + `/?preview=settings` in a browser): the
  * Settings panel with the Tauri backend mocked, so its controls can be checked
- * and screenshotted without the app. main.tsx gates it behind import.meta.env.DEV.
+ * and screenshotted without the app. Add `&lang=ar`, `&fail=set_model` or
+ * `&fail=download`. main.tsx gates it behind import.meta.env.DEV.
  */
 export default function SettingsPreview() {
   const [open, setOpen] = useState(true);
   return (
-    <I18nProvider lang="en">
+    <I18nProvider lang={lang}>
       <button
         className="m-4 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs text-ink-200"
         onClick={() => setOpen(true)}

@@ -150,6 +150,7 @@ export const api = {
   listModels: () => invoke<ModelInfo[]>("list_models"),
   downloadModel: (name: string) => invoke<void>("download_model", { name }),
   deleteModel: (name: string) => invoke<void>("delete_model", { name }),
+  setModel: (name: string) => invoke<void>("set_model", { name }),
   getUsage: () => invoke<ApiUsage>("get_usage"),
   resetUsage: () => invoke<void>("reset_usage"),
   appStatus: () => invoke<AppStatus>("app_status"),

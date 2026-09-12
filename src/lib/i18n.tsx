@@ -28,13 +28,12 @@ const STRINGS = {
   app_version: { en: "Version", ar: "الإصدار" },
   manual_dl: { en: "Manual download:", ar: "تنزيل يدوي:" },
 
-  // First-run model download
-  first_run_title: { en: "Download the speech model", ar: "تنزيل نموذج الكلام" },
+  // First-run model choice
+  first_run_title: { en: "Choose a speech model", ar: "اختر نموذج الكلام" },
   first_run_desc: {
-    en: "EchoFlow needs a one-time ~465 MB model to transcribe. It's saved on this PC and kept across updates.",
-    ar: "يحتاج EchoFlow إلى نموذج بحجم ~465 ميجابايت لمرة واحدة للتحويل. يُحفظ على هذا الجهاز ويبقى عبر التحديثات.",
+    en: "EchoFlow turns speech into text on this PC, offline. Pick a model to download once. You can switch or delete models later in Settings.",
+    ar: "يحوّل EchoFlow كلامك إلى نص على هذا الجهاز بدون إنترنت. اختر نموذجاً لتنزيله مرة واحدة. يمكنك تغييره أو حذفه لاحقاً من الإعدادات.",
   },
-  first_run_button: { en: "Download (~465 MB)", ar: "تنزيل (~465 ميجابايت)" },
 
   // Output modes (shared by header switcher + settings)
   mode_raw: { en: "Raw text", ar: "نص كما هو" },
@@ -149,6 +148,50 @@ const STRINGS = {
   bigger_better_arabic: {
     en: "Bigger models hear Arabic dialects far better, but are larger and slower.",
     ar: "النماذج الأكبر تسمع اللهجات العربية أفضل بكثير، لكنها أكبر حجماً وأبطأ.",
+  },
+  recommended: { en: "Recommended", ar: "مُوصى به" },
+  downloaded: { en: "Downloaded", ar: "مُنزَّل" },
+  use_this_model: { en: "Use this model", ar: "استخدم هذا النموذج" },
+  model_delete_q: {
+    en: "Delete this model? You can download it again later.",
+    ar: "حذف هذا النموذج؟ يمكنك تنزيله مرة أخرى لاحقاً.",
+  },
+
+  // Speech model names and what each is good for (ids live in lib/models.ts)
+  model_tiny: { en: "Mini", ar: "مصغّر" },
+  model_tiny_desc: {
+    en: "Smallest and fastest. Fine for short, clear English. Weak on Arabic.",
+    ar: "الأصغر والأسرع. مناسب لجمل إنجليزية قصيرة وواضحة. ضعيف مع العربية.",
+  },
+  model_base: { en: "Basic", ar: "أساسي" },
+  model_base_desc: {
+    en: "Fast and light. Good for clear English on older PCs.",
+    ar: "سريع وخفيف. جيد للإنجليزية الواضحة على الأجهزة القديمة.",
+  },
+  model_small: { en: "Balanced", ar: "متوازن" },
+  model_small_desc: {
+    en: "Good English and basic Arabic. Runs well on most PCs.",
+    ar: "إنجليزية جيدة وعربية مقبولة. يعمل جيداً على معظم الأجهزة.",
+  },
+  model_medium: { en: "Accurate", ar: "دقيق" },
+  model_medium_desc: {
+    en: "Better with accents and Arabic. Slow without a graphics card.",
+    ar: "أفضل مع اللهجات والعربية. بطيء بدون كرت شاشة.",
+  },
+  model_turbo_q5: { en: "Turbo", ar: "توربو" },
+  model_turbo_q5_desc: {
+    en: "Best for most people. Very good accuracy, fast with a graphics card.",
+    ar: "الأفضل لمعظم الناس. دقة عالية جداً، وسريع مع كرت الشاشة.",
+  },
+  model_turbo: { en: "Turbo Plus", ar: "توربو بلس" },
+  model_turbo_desc: {
+    en: "Turbo at full size. A little more precise, about 3 times the download.",
+    ar: "نسخة توربو الكاملة. أدق قليلاً، وحجمه حوالي 3 أضعاف.",
+  },
+  model_large: { en: "Maximum", ar: "الأقصى" },
+  model_large_desc: {
+    en: "Most accurate, best for Arabic dialects. Biggest and slowest.",
+    ar: "الأدق، والأفضل للهجات العربية. الأكبر والأبطأ.",
   },
   language: { en: "Language", ar: "اللغة" },
   auto_detect: { en: "Auto detect", ar: "كشف تلقائي" },
