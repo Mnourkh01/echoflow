@@ -388,6 +388,39 @@ fn fuzz_cap(n: usize) -> usize {
     }
 }
 
+/// Everyday short words. A fuzzy match that has to merge one of these into a
+/// window is an ordinary phrase ("follow is", "for print"), not a misheard term.
+const FUNCTION_WORDS: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "am", "to", "of", "for", "in", "on",
+    "at", "by", "and", "or", "but", "if", "it", "its", "as", "so", "we", "i", "you", "he",
+    "she", "they", "my", "your", "our", "this", "that", "with", "from", "not", "no", "do",
+    "me", "us", "في", "من", "على", "عن", "مع", "الى", "إلى",
+];
+
+/// Extra checks on a fuzzy (not exact) match. A window merged from more words
+/// than the term may not contain a function word, and a single word two edits
+/// away must share the term's first three letters: "footprint" is not
+/// "foloprint", "followprint" is.
+fn fuzzy_match_allowed(
+    size: usize,
+    term_words: usize,
+    has_function_word: bool,
+    joined: &str,
+    term: &str,
+    distance: usize,
+) -> bool {
+    if distance == 0 {
+        return true;
+    }
+    if size > term_words && has_function_word {
+        return false;
+    }
+    if size == 1 && distance >= 2 {
+        return joined.chars().take(3).eq(term.chars().take(3));
+    }
+    true
+}
+
 /// Rewrite fuzzy matches of the user's vocabulary terms to their exact
 /// spelling. Matches windows of adjacent words (so "echo flow" -> "EchoFlow"),
 /// compares joined lowercase forms, and splices the canonical term over the
@@ -463,7 +496,11 @@ pub fn apply_custom_vocab(text: &str, vocab: &str) -> String {
                     0
                 };
                 let d = levenshtein(&joined, &joined_term, budget);
-                if d <= budget && best.map_or(true, |(bd, _)| d < bd) {
+                let has_function_word = words[i..i + size]
+                    .iter()
+                    .any(|w| FUNCTION_WORDS.contains(&w.lower.as_str()));
+                let allowed = fuzzy_match_allowed(size, n, has_function_word, &joined, &joined_term, d);
+                if d <= budget && allowed && best.map_or(true, |(bd, _)| d < bd) {
                     best = Some((d, size));
                 }
             }
@@ -598,6 +635,27 @@ mod tests {
         assert_eq!(apply_custom_vocab("the cat sat", "Cats"), "the cat sat");
         // Already-correct text is untouched.
         assert_eq!(apply_custom_vocab("EchoFlow is here", "EchoFlow"), "EchoFlow is here");
+    }
+
+    #[test]
+    fn vocab_leaves_real_words_near_a_term() {
+        // Ordinary phrases two edits (plus a merge) away from his long terms.
+        let vocab = "foloprint, folowise";
+        for s in [
+            "reduce the footprint of the app",
+            "it is ready for print today",
+            "the rule to follow is simple",
+        ] {
+            assert_eq!(apply_custom_vocab(s, vocab), s);
+        }
+    }
+
+    #[test]
+    fn vocab_still_fixes_his_real_mishearings() {
+        let vocab = "foloprint, folowise";
+        assert_eq!(apply_custom_vocab("for like full print", vocab), "for like foloprint");
+        assert_eq!(apply_custom_vocab("fix the followprint issue", vocab), "fix the foloprint issue");
+        assert_eq!(apply_custom_vocab("open follow wise now", vocab), "open folowise now");
     }
 
     #[test]
