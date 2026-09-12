@@ -21,6 +21,7 @@ const settings: Settings = {
   custom_vocab: "EchoFlow, Folowise",
   ptt_hotkey: "CommandOrControl+Shift+Space",
   toggle_hotkey: "CommandOrControl+Shift+E",
+  cancel_hotkey: "Escape",
   capture_mode: "toggle",
   auto_type: true,
   auto_copy: true,

@@ -59,6 +59,7 @@ export interface Settings {
   custom_vocab: string; // names/jargon/brands to bias the decoder toward
   ptt_hotkey: string;
   toggle_hotkey: string; // global shortcut to flip main window <-> floating pill
+  cancel_hotkey: string; // discards the live take; registered only while one is live ("" = off)
   capture_mode: "hold" | "toggle";
   auto_type: boolean;
   auto_copy: boolean;

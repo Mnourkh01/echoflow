@@ -266,6 +266,11 @@ const STRINGS = {
     en: "Global shortcut to flip between the full window and the floating pill.",
     ar: "اختصار عام للتبديل بين النافذة الكاملة والشريط العائم.",
   },
+  cancel_hotkey: { en: "Cancel shortcut", ar: "اختصار الإلغاء" },
+  cancel_hotkey_hint: {
+    en: "Throws away the current take from anywhere, even in pill mode. It only listens while recording or transcribing, so the rest of the time Esc works as usual in other apps. In hold mode, let go of the talk key first.",
+    ar: "يلغي التسجيل الحالي من أي مكان، حتى في وضع الشريط العائم. يعمل فقط أثناء التسجيل أو التحويل، وفي باقي الوقت يعمل Esc بشكل طبيعي في البرامج الأخرى. في وضع الضغط المستمر، اترك زر التحدث أولاً.",
+  },
   press_shortcut: { en: "Press your shortcut...", ar: "اضغط اختصارك..." },
   click_set_shortcut: { en: "Click to set a shortcut", ar: "انقر لتعيين اختصار" },
   clear: { en: "clear", ar: "مسح" },

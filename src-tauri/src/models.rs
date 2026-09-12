@@ -58,6 +58,7 @@ pub struct Settings {
     pub custom_vocab: String,  // user's names/jargon/brands to bias the decoder toward (comma/newline separated)
     pub ptt_hotkey: String,
     pub toggle_hotkey: String, // global shortcut to flip the main window <-> floating pill
+    pub cancel_hotkey: String, // discards the live take; registered only while one is live ("" = off)
     pub capture_mode: String,  // "hold" (push to talk) | "toggle"
     pub auto_type: bool,      // type result into the focused app
     pub auto_copy: bool,      // leave the result on the clipboard so it can be pasted anywhere
@@ -101,6 +102,7 @@ impl Default for Settings {
             custom_vocab: String::new(),
             ptt_hotkey: "CommandOrControl+Shift+Space".to_string(),
             toggle_hotkey: "CommandOrControl+Shift+E".to_string(),
+            cancel_hotkey: "Escape".to_string(),
             capture_mode: "toggle".to_string(),
             auto_type: true,
             auto_copy: true,

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 use crate::audio;
 use crate::enhance;
@@ -681,6 +681,12 @@ pub fn begin_recording(state: &AppState, device: Option<String>) -> Result<(), S
 /// Stop capture, transcribe, save, and (optionally) type the result into the
 /// focused app. Shared by the command and the global hotkey handler.
 pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingResult>, String> {
+    // Hold the busy flag for the whole transcribe+type pass so a second press
+    // can't start a new clip or stack another job behind the engine lock. The
+    // guard clears it on every exit path, including the early silent-discard.
+    // Set before the recording slot empties: in between, the take would look
+    // over and the cancel-key guard would let go of the key.
+    let _busy = state.begin_transcribing();
     let handle = state
         .recording
         .lock()
@@ -689,10 +695,6 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // The CLI pre-spawned for this recording, if any. Taken first so every exit
     // below, the early discards included, stops it when it goes unused.
     let warm = state.take_warm_cli();
-    // Hold the busy flag for the whole transcribe+type pass so a second press
-    // can't start a new clip or stack another job behind the engine lock. The
-    // guard clears it on every exit path, including the early silent-discard.
-    let _busy = state.begin_transcribing();
     let captured = handle.stop().map_err(|e| e.to_string())?;
     state.level.store(0, Ordering::Relaxed);
 
@@ -880,6 +882,13 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         transcript.full_text = crate::text::restore_diacritics(&transcript.full_text);
     }
 
+    // Canceled after the decode finished (during the AI step, which the whisper
+    // abort cannot reach): drop the take before it is saved or typed.
+    if state.transcribe_canceled() {
+        log::info!("take canceled after decode; clip discarded");
+        return Ok(None);
+    }
+
     let stamp = Utc::now().timestamp_millis();
     let audio_path = state.paths.new_audio_path(stamp);
     write_wav_16k(&audio_path, &audio_16k).map_err(|e| e.to_string())?;
@@ -948,6 +957,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
 pub fn start_recording(app: AppHandle, state: State<AppState>, device: Option<String>) -> R<()> {
     begin_recording(state.inner(), device)?;
     spawn_silence_guard(app.clone());
+    spawn_cancel_key_guard(app.clone());
     prepare_while_recording(&app);
     Ok(())
 }
@@ -983,6 +993,75 @@ pub fn spawn_silence_guard(app: AppHandle) {
     });
 }
 
+/// Holds the cancel shortcut (Esc by default) for one take. It is registered
+/// only while the take is live, so the rest of the time the key still reaches
+/// other apps. `register` waits on the main thread, and the shortcut handler
+/// runs there under the plugin's lock: never hold an AppState guard across a
+/// plugin call here, and never call the plugin from the handler.
+pub fn spawn_cancel_key_guard(app: AppHandle) {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let gs = app.global_shortcut();
+        let mut held: Option<Shortcut> = None;
+        let mut failed: Option<Shortcut> = None;
+        loop {
+            let live = state.is_recording() || state.is_busy();
+            let wanted = if live {
+                let s = state.settings.read();
+                cancel_shortcut(&s.cancel_hotkey, &s.ptt_hotkey, &s.toggle_hotkey)
+            } else {
+                None
+            };
+            if let Some(old) = held.filter(|&k| Some(k) != wanted) {
+                let _ = gs.unregister(old);
+                held = None;
+            }
+            // Also takes the key back after register_shortcuts' unregister_all
+            // (a hotkey change saved mid-take drops every shortcut).
+            if let Some(key) = wanted.filter(|&k| Some(k) != failed && !gs.is_registered(k)) {
+                match gs.register(key) {
+                    Ok(()) => held = Some(key),
+                    Err(e) => {
+                        log::warn!("could not register the cancel key {key:?}: {e}");
+                        failed = Some(key);
+                    }
+                }
+            }
+            if !live {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
+/// The cancel key as a shortcut, unless it is empty, unreadable, or the same key
+/// as push-to-talk or the pill toggle (their presses keep their own job).
+fn cancel_shortcut(key: &str, ptt: &str, toggle: &str) -> Option<Shortcut> {
+    let key = key.trim().parse::<Shortcut>().ok()?;
+    let same = |other: &str| other.trim().parse::<Shortcut>().is_ok_and(|o| o == key);
+    (!same(ptt) && !same(toggle)).then_some(key)
+}
+
+/// Cancel key: discard the take in whatever phase it is in. Drops the clip while
+/// recording; while transcribing it requests the abort, and end_recording then
+/// returns nothing.
+pub fn discard_take(app: &AppHandle, state: &AppState) {
+    if let Some(h) = state.recording.lock().take() {
+        let _ = h.stop();
+        let _ = state.take_warm_cli(); // stops the unused pre-spawned CLI
+        state.level.store(0, Ordering::Relaxed);
+        log::info!("cancel key: recording discarded");
+        let _ = app.emit("rec-canceled", "user");
+    } else if state.is_busy() {
+        state.request_cancel_transcribe();
+        log::info!("cancel key: transcription abort requested");
+        // An in-app take hears of it only through this: its stop call just
+        // returns nothing, which would otherwise read as "no speech".
+        let _ = app.emit("rec-cancel-requested", ());
+    }
+}
+
 /// Discard the current recording without transcribing (the "said it wrong,
 /// let me retry" button). Emits `rec-canceled` with reason "user" so every
 /// window (main, pill) resets, regardless of which surface asked.
@@ -1008,8 +1087,11 @@ pub fn cancel_transcription(state: State<AppState>) -> R<()> {
     Ok(())
 }
 
-#[tauri::command]
-pub fn stop_recording(state: State<AppState>) -> R<Option<RecordingResult>> {
+/// Async so the decode runs off the main thread. As a sync command it held the
+/// main thread for the whole decode, and the cancel key (whose handler runs
+/// there) could not fire until it was over.
+#[tauri::command(async)]
+pub fn stop_recording(state: State<'_, AppState>) -> R<Option<RecordingResult>> {
     // In-app button/Space: show in our window, do not type into another app.
     // Returns None when the clip was silent (mis-click) and got discarded.
     end_recording(state.inner(), false)
@@ -1775,5 +1857,20 @@ mod tests {
                 assert_eq!(saved, stored.model, "an unreadable row is never overwritten");
             }
         }
+    }
+
+    #[test]
+    fn cancel_shortcut_skips_empty_and_clashing_keys() {
+        let (ptt, toggle) = ("CommandOrControl+Shift+Space", "CommandOrControl+Shift+E");
+        assert!(cancel_shortcut("Escape", ptt, toggle).is_some());
+        assert!(cancel_shortcut("  ", ptt, toggle).is_none(), "cleared = off");
+        assert!(cancel_shortcut(ptt, ptt, toggle).is_none(), "never steals push-to-talk");
+        assert!(cancel_shortcut(toggle, ptt, toggle).is_none());
+    }
+
+    #[test]
+    fn old_settings_rows_get_esc_as_the_cancel_key() {
+        let s: Settings = serde_json::from_str(r#"{"model":"small"}"#).unwrap();
+        assert_eq!(s.cancel_hotkey, "Escape");
     }
 }

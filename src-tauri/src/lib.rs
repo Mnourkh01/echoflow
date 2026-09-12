@@ -152,7 +152,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    let (mode, recording, busy, ptt_key, toggle_key) = {
+                    let (mode, recording, busy, ptt_key, toggle_key, cancel_key) = {
                         let state = app.state::<AppState>();
                         let s = state.settings.read();
                         (
@@ -161,6 +161,7 @@ pub fn run() {
                             state.is_busy(),
                             s.ptt_hotkey.clone(),
                             s.toggle_hotkey.clone(),
+                            s.cancel_hotkey.clone(),
                         )
                     };
                     // Both shortcuts arrive through this one handler; match the
@@ -175,6 +176,16 @@ pub fn run() {
                     if fired(&toggle_key) {
                         if event.state() == ShortcutState::Pressed {
                             toggle_main_pill(app);
+                        }
+                        return;
+                    }
+
+                    // Cancel key: registered only while a take is live (see
+                    // commands::spawn_cancel_key_guard). This handler runs under
+                    // the plugin's lock, so nothing here may call the plugin.
+                    if fired(&cancel_key) && !fired(&ptt_key) {
+                        if event.state() == ShortcutState::Pressed {
+                            commands::discard_take(app, app.state::<AppState>().inner());
                         }
                         return;
                     }
@@ -401,6 +412,7 @@ fn start_and_notify(app: &tauri::AppHandle) {
     match commands::begin_recording(state.inner(), None) {
         Ok(()) => {
             commands::spawn_silence_guard(app.clone());
+            commands::spawn_cancel_key_guard(app.clone());
             commands::prepare_while_recording(app);
             let _ = app.emit("rec-started", ());
         }

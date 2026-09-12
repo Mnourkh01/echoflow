@@ -873,6 +873,18 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             <p className="mt-1 text-xs text-ink-500">{t("toggle_window_hotkey_hint")}</p>
           </Field>
 
+          <Field label={t("cancel_hotkey")}>
+            <HotkeyRecorder
+              value={settings.cancel_hotkey}
+              placeholderSet={t("click_set_shortcut")}
+              placeholderRecording={t("press_shortcut")}
+              clearLabel={t("clear")}
+              allowEscape
+              onChange={(v) => patch({ cancel_hotkey: v })}
+            />
+            <p className="mt-1 text-xs text-ink-500">{t("cancel_hotkey_hint")}</p>
+          </Field>
+
           <Toggle
             label={t("type_into_active")}
             desc={t("type_into_active_desc")}
@@ -1279,12 +1291,14 @@ function HotkeyRecorder({
   placeholderSet,
   placeholderRecording,
   clearLabel,
+  allowEscape = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholderSet: string;
   placeholderRecording: string;
   clearLabel: string;
+  allowEscape?: boolean;
 }) {
   const [recording, setRecording] = useState(false);
 
@@ -1294,6 +1308,10 @@ function HotkeyRecorder({
       e.preventDefault();
       e.stopImmediatePropagation();
       if (e.key === "Escape") {
+        // The cancel key defaults to Esc, so its recorder keeps Esc as a value.
+        if (allowEscape && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+          onChange("Escape");
+        }
         setRecording(false);
         return;
       }
@@ -1305,7 +1323,7 @@ function HotkeyRecorder({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [recording, onChange]);
+  }, [recording, onChange, allowEscape]);
 
   return (
     <button

@@ -122,10 +122,15 @@ export default function App() {
     }
   }, []);
 
+  // True while this window awaits its own stop_recording. A cancel key pressed
+  // then reaches it only as "rec-cancel-requested" (the call returns null).
+  const stopPendingRef = useRef(false);
+
   const stop = useCallback(async () => {
     if (recStateRef.current !== "recording") return;
     if (settingsRef.current?.sound ?? true) playStop();
     setRecState("transcribing");
+    stopPendingRef.current = true;
     try {
       const res = await api.stopRecording();
       if (res) {
@@ -153,6 +158,7 @@ export default function App() {
       flashMic("sad");
       setError(String(e));
     } finally {
+      stopPendingRef.current = false;
       setRecState("idle");
       setLevel(0);
     }
@@ -283,6 +289,9 @@ export default function App() {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
       }
     });
+    const offCancelRequested = listen("rec-cancel-requested", () => {
+      if (stopPendingRef.current) cancelingRef.current = true;
+    });
     // Output mode (and other settings) can change from the tray menu; keep the UI in sync.
     const offSettings = listen<Settings>("settings-changed", (e) => setSettings(e.payload));
     // The retention purge (timer or settings save) deleted rows: close the open
@@ -300,6 +309,7 @@ export default function App() {
       offResult.then((f) => f());
       offError.then((f) => f());
       offCanceled.then((f) => f());
+      offCancelRequested.then((f) => f());
       offSettings.then((f) => f());
       offPurged.then((f) => f());
     };

@@ -121,7 +121,14 @@ and already installed on this machine.
 - `?preview=settings` on the Vite dev server shows the Settings panel with the
   Tauri IPC mocked (dev builds only).
 - Esc / the X button cancels a take: while recording it discards the clip;
-  while transcribing it aborts the decode via the whisper abort callback.
+  while transcribing it aborts the decode via the whisper abort callback, and a
+  cancel during the AI step drops the take before it is saved or typed. The
+  cancel key (`cancel_hotkey`, default Escape) is a global shortcut held only
+  while a take is live (`spawn_cancel_key_guard`, one thread per take), so it
+  works in pill mode. The shortcut handler runs on the main thread under the
+  plugin's lock: it must never call the plugin, and the guard never holds an
+  AppState lock across a plugin call. `stop_recording` is an async command so an
+  in-app decode does not hold the main thread.
 - `?preview=mascot` on the Vite dev server shows a browser-only harness for the
   record control (dev builds only). `?preview=first-run` does the same for the
   first-run model picker (`&lang=ar`, `&present=small`, `&fail=download|set_model`).
