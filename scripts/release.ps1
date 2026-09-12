@@ -44,11 +44,14 @@ Set-Location $root
 npm run tauri build -- --features gpu-vulkan
 if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
 
-# 3. Locate the installer + its signature.
-$nsisDir = "$root\src-tauri\target\release\bundle\nsis"
-$setup = Get-ChildItem "$nsisDir\*-setup.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
-$sig = Get-ChildItem "$nsisDir\*-setup.exe.sig" | Sort-Object LastWriteTime | Select-Object -Last 1
-if (-not $setup -or -not $sig) { throw "installer or .sig not found in $nsisDir" }
+# 3. Locate the installer + its signature. Ask cargo for the target dir: a machine-wide
+#    target-dir in ~/.cargo/config.toml moves the bundle out of src-tauri\target, and
+#    that shared dir can hold older installers, so match this exact version.
+$targetDir = (cargo metadata --no-deps --format-version 1 --manifest-path "$root\src-tauri\Cargo.toml" | ConvertFrom-Json).target_directory
+$nsisDir = "$targetDir\release\bundle\nsis"
+$setup = Get-ChildItem "$nsisDir\*_${Version}_*-setup.exe" | Sort-Object LastWriteTime | Select-Object -Last 1
+$sig = Get-ChildItem "$nsisDir\*_${Version}_*-setup.exe.sig" | Sort-Object LastWriteTime | Select-Object -Last 1
+if (-not $setup -or -not $sig) { throw "installer or .sig for $Version not found in $nsisDir" }
 $sigText = (Get-Content $sig.FullName -Raw).Trim()
 
 # 4. Build latest.json (the manifest the app polls).
