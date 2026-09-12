@@ -137,6 +137,13 @@ and already installed on this machine.
   Rust `KNOWN_MODELS` allowlist. Switching models goes through `set_model`
   (changes only `model`, never purges, saves only trusted settings), never
   `update_settings`. `delete_model` refuses the model in use.
+- Start/stop sounds are two pip packs the user picked by ear on 2026-09-12 out of
+  forty candidates; do not add or swap a pack he has not heard. They are files in
+  `src/assets/sounds/`, rendered by `scripts/render-sounds.py` (numpy + ffmpeg)
+  and mastered to -11 LUFS momentary max, true peak under -1 dBTP. Re-run the
+  script after a design change; do not tune loudness in `sound.ts`, whose curve
+  puts the default 70% at the file level and 100% at about +4 dB into a limiter.
+  Saved retired pack keys (soft, chime, custom...) play `pip`.
 
 ## Phases
 

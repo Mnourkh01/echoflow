@@ -27,7 +27,7 @@ const settings: Settings = {
   auto_copy: true,
   keep_line_breaks: false,
   sound: true,
-  sound_pack: "soft",
+  sound_pack: "pip",
   sound_volume: 70,
   accent: "iris",
   mic_style: "orb",

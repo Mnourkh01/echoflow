@@ -65,7 +65,7 @@ export interface Settings {
   auto_copy: boolean;
   keep_line_breaks: boolean;
   sound: boolean;
-  sound_pack: string; // chime set: soft | marimba | glass | pop | chime
+  sound_pack: string; // cue set: pip | pip_updown (retired keys play pip)
   sound_volume: number; // 0..100
   accent: string; // accent palette key: iris | teal | amber | rose | emerald | sky
   mic_style: string; // record-button look: "orb" | "robot"

@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { MODEL_CATALOG, RECOMMENDED_MODEL, fmtSize } from "../lib/models";
 import { checkForUpdate, installUpdate } from "../lib/updater";
 import { translate, type Lang, type StringKey } from "../lib/i18n";
-import { previewSound, SOUND_PACKS } from "../lib/sound";
+import { knownPack, previewSound, SOUND_PACKS } from "../lib/sound";
 import { PALETTES, applyAccent } from "../lib/theme";
 
 const pct = (p: DownloadProgress) =>
@@ -941,8 +941,8 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
           />
           {settings.sound && (
             <>
-              <Field label={t("sound_style")}>
-                <div className="grid grid-cols-3 gap-2">
+              <FieldGroup label={t("sound_style")}>
+                <div className="grid grid-cols-2 gap-2">
                   {SOUND_PACKS.map((p) => (
                     <button
                       key={p}
@@ -952,7 +952,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                       }}
                       className={[
                         "rounded-lg px-3 py-2 text-sm transition",
-                        settings.sound_pack === p
+                        knownPack(settings.sound_pack) === p
                           ? "accent-grad text-white"
                           : "bg-white/[0.05] text-ink-400 hover:text-white",
                       ].join(" ")}
@@ -961,10 +961,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     </button>
                   ))}
                 </div>
-                {settings.sound_pack === "custom" && (
-                  <p className="mt-1.5 text-xs text-ink-500">{t("sound_custom_hint")}</p>
-                )}
-              </Field>
+              </FieldGroup>
               <Field label={t("sound_volume")}>
                 <div className="flex items-center gap-3">
                   <input

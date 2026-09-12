@@ -64,7 +64,7 @@ pub struct Settings {
     pub auto_copy: bool,      // leave the result on the clipboard so it can be pasted anywhere
     pub keep_line_breaks: bool, // keep newlines when typing (off = one line, never presses Enter)
     pub sound: bool,          // soft start/stop chime on/off
-    pub sound_pack: String,   // which chime set: "soft" | "marimba" | "glass" | "pop" | "chime"
+    pub sound_pack: String,   // start/stop cue set: "pip" | "pip_updown" (retired keys play "pip")
     pub sound_volume: i64,    // chime loudness 0..100
     pub accent: String,       // accent palette key: "iris" | "teal" | "amber" | "rose" | "emerald" | "sky"
     pub mic_style: String,    // record-button look: "orb" (glass sphere) | "robot" (animated mascot)
@@ -108,7 +108,7 @@ impl Default for Settings {
             auto_copy: true,
             keep_line_breaks: false,
             sound: true,
-            sound_pack: "soft".to_string(),
+            sound_pack: "pip".to_string(),
             sound_volume: 70,
             accent: "iris".to_string(),
             mic_style: "orb".to_string(),
