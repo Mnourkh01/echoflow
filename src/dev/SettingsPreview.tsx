@@ -70,7 +70,7 @@ mockIPC(
       case "is_elevated":
         return false;
       case "plugin:app|version":
-        return "1.7.0";
+        return "1.7.1";
       default:
         return null;
     }
