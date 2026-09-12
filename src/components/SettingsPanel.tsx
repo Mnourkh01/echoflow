@@ -854,6 +854,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               placeholderSet={t("click_set_shortcut")}
               placeholderRecording={t("press_shortcut")}
               clearLabel={t("clear")}
+              plainKeyWarning={t("hotkey_plain_warning")}
               onChange={(v) => {
                 patch({ ptt_hotkey: v });
                 setWarn(null);
@@ -868,6 +869,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
               placeholderSet={t("click_set_shortcut")}
               placeholderRecording={t("press_shortcut")}
               clearLabel={t("clear")}
+              plainKeyWarning={t("hotkey_plain_warning")}
               onChange={(v) => patch({ toggle_hotkey: v })}
             />
             <p className="mt-1 text-xs text-ink-500">{t("toggle_window_hotkey_hint")}</p>
@@ -1289,6 +1291,7 @@ function HotkeyRecorder({
   placeholderRecording,
   clearLabel,
   allowEscape = false,
+  plainKeyWarning,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -1296,6 +1299,7 @@ function HotkeyRecorder({
   placeholderRecording: string;
   clearLabel: string;
   allowEscape?: boolean;
+  plainKeyWarning?: string; // shown when the combo has no Ctrl/Alt/Win
 }) {
   const [recording, setRecording] = useState(false);
 
@@ -1322,7 +1326,17 @@ function HotkeyRecorder({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [recording, onChange, allowEscape]);
 
+  // A global shortcut with no Ctrl/Alt/Win swallows that key in every app (a
+  // Shift+Z hotkey means no capital Z anywhere). F-keys are safe. The cancel key
+  // is only held while a take is live, so its recorder gets no warning text.
+  const plainKey =
+    !!plainKeyWarning &&
+    !!value &&
+    !/(^|\+)(CommandOrControl|Control|Ctrl|Alt|Super|Meta)(\+|$)/.test(value) &&
+    !/(^|\+)F\d{1,2}$/.test(value);
+
   return (
+    <>
     <button
       type="button"
       onClick={() => setRecording((r) => !r)}
@@ -1348,5 +1362,7 @@ function HotkeyRecorder({
         </span>
       )}
     </button>
+    {plainKey && <p className="mt-1.5 text-xs text-amber-300">{plainKeyWarning}</p>}
+    </>
   );
 }

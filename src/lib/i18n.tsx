@@ -408,6 +408,10 @@ const STRINGS = {
     en: "Put diacritics back on common European loanwords in English output.",
     ar: "يعيد العلامات التشكيلية على الكلمات الأوروبية الدخيلة في المخرجات الإنجليزية.",
   },
+  hotkey_plain_warning: {
+    en: "Without Ctrl, Alt or Win, this key stops typing in every other app while EchoFlow runs.",
+    ar: "بدون Ctrl أو Alt أو Win، هذا الحرف لن يُكتب في أي برنامج آخر ما دام EchoFlow يعمل.",
+  },
   pill_on_clipboard: { en: "Press Ctrl+V", ar: "اضغط Ctrl+V" },
   pill_on_translate: { en: "On Translate", ar: "وضع الترجمة" },
   pill_typed_raw: { en: "Typed as spoken", ar: "كُتب كما قلته" },
