@@ -330,9 +330,21 @@ pub enum Rejection {
 const META_OPENERS: &[&str] = &[
     "i can only", "i cannot", "i can't", "i can not", "i'm unable", "i am unable", "i'm a ",
     "i am a ", "i need clarification", "i need to clarify", "i don't recognize",
-    "i do not recognize", "as an ai", "sorry, but i", "i'm sorry, but", "it seems",
-    "it looks like", "there is nothing", "there's nothing", "could you provide",
-    "could you please provide", "please provide more",
+    "i do not recognize", "as an ai", "sorry, but i", "i'm sorry, but", "there is nothing",
+    "there's nothing",
+];
+
+/// Openings real sentences use too ("It seems the transcription is slow", "Could
+/// you provide the transcript by Friday"). They mark a meta reply only together
+/// with a phrase aimed at whoever sent the transcript.
+const IMPERSONAL_OPENERS: &[&str] = &[
+    "it seems", "it looks like", "could you provide", "could you please provide",
+    "please provide more",
+];
+
+const SELF_REFERENCES: &[&str] = &[
+    "you provided", "you've provided", "you have provided", "the transcript you",
+    "the text you", "more context", "clarif", "what you're asking", "what you are asking",
 ];
 
 /// Words that only a reply about the pipeline uses.
@@ -341,11 +353,12 @@ const PIPELINE_WORDS: &[&str] = &[
 ];
 
 /// Decide whether a reply can be typed. A meta reply must both open like one and
-/// mention the pipeline; for Clean writing and Prompt mode that pipeline word must
-/// also be absent from what was said, so "I can't find the transcript" survives.
-/// Translate input is another language, so there the two signals are enough. The
-/// length rule catches an answer (a poem for "write a poem"); Prompt mode may add
-/// context, so it is exempt.
+/// mention the pipeline; an impersonal opening also needs a phrase aimed at the
+/// sender. For Clean writing and Prompt mode that pipeline word must also be
+/// absent from what was said, so "I can't find the transcript" survives.
+/// Translate input is another language, so there the other signals are enough.
+/// The length rule catches an answer (a poem for "write a poem"); Prompt mode may
+/// add context, so it is exempt.
 pub fn check_reply(mode: &str, input: &str, output: &str) -> Result<(), Rejection> {
     let out = output
         .trim()
@@ -353,7 +366,10 @@ pub fn check_reply(mode: &str, input: &str, output: &str) -> Result<(), Rejectio
         .replace('\u{2019}', "'")
         .to_lowercase();
     let said = input.to_lowercase();
-    if META_OPENERS.iter().any(|o| out.starts_with(o)) {
+    let meta_opening = META_OPENERS.iter().any(|o| out.starts_with(o))
+        || (IMPERSONAL_OPENERS.iter().any(|o| out.starts_with(o))
+            && SELF_REFERENCES.iter().any(|r| out.contains(r)));
+    if meta_opening {
         if let Some(word) = PIPELINE_WORDS.iter().find(|w| out.contains(*w)) {
             if mode == "translate" || !said.contains(word) {
                 return Err(Rejection::MetaReply);
@@ -873,6 +889,33 @@ to wish you joy again, happy birthday little one, may your days be full of sun a
         ];
         for (mode, said, reply) in ok {
             assert!(check_reply(mode, said, reply).is_ok(), "{mode}: {reply}");
+        }
+    }
+
+    #[test]
+    fn guard_keeps_real_sentences_about_transcription() {
+        // He dictates about a dictation app, often with an Arabic word the model
+        // translates into "transcription".
+        let ok = [
+            ("translate", "يبدو إنه ال transcription بطيء", "It seems the transcription is slow."),
+            ("polish", "it seems the تفريغ is slow", "It seems the transcription is slow."),
+            ("translate", "شكله ما في شي نترجمه بالملف", "It looks like there's nothing to translate in the file."),
+        ];
+        for (mode, said, reply) in ok {
+            assert!(check_reply(mode, said, reply).is_ok(), "{mode}: {reply}");
+        }
+    }
+
+    #[test]
+    fn guard_rejects_impersonal_meta_replies() {
+        let cases = [
+            ("translate", "Waal Kfuri",
+             "It seems you provided an English transcript, so there is nothing to translate."),
+            ("polish", "hmm ok",
+             "It looks like the transcript is incomplete. Could you provide more context?"),
+        ];
+        for (mode, said, reply) in cases {
+            assert_eq!(check_reply(mode, said, reply), Err(Rejection::MetaReply), "{mode}: {reply}");
         }
     }
 
