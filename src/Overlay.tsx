@@ -1,12 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Languages, X } from "lucide-react";
-import { api, type Settings } from "./lib/api";
+import { AlertTriangle, ClipboardCheck, Languages, MicOff, X } from "lucide-react";
+import { api, type RecordingResult, type Settings } from "./lib/api";
 import { applyAccent } from "./lib/theme";
+import { translate, type Lang, type StringKey } from "./lib/i18n";
 import logo from "./assets/echoflow.png";
 
 type Mode = "idle" | "recording" | "processing";
+
+// What the pill says after a take, when there is something to say. The main
+// window is hidden in pill mode, so this is the only place he can see it.
+type PillNotice = { kind: "translate" | "clipboard" | "raw" | "silent" | "failed"; label: StringKey; detail: string };
+
+const NOTICE_MS = { translate: 2800, clipboard: 4500, raw: 3500, silent: 2500, failed: 4000 } as const;
+
+const NOTICE_LOOK = {
+  translate: { Icon: Languages, border: "border-amber-400/70", text: "text-amber-300" },
+  clipboard: { Icon: ClipboardCheck, border: "border-sky-400/70", text: "text-sky-300" },
+  raw: { Icon: AlertTriangle, border: "border-amber-400/70", text: "text-amber-300" },
+  silent: { Icon: MicOff, border: "border-white/25", text: "text-ink-300" },
+  failed: { Icon: AlertTriangle, border: "border-red-400/70", text: "text-red-300" },
+} as const;
 
 // A denser waveform reads more like a modern voice UI. Center bars are tallest
 // (Siri-style envelope); a small deterministic jitter keeps it lively.
@@ -21,13 +36,23 @@ export default function Overlay() {
   const [mode, setMode] = useState<Mode>("idle");
   const [level, setLevel] = useState(0);
   const [pillStyle, setPillStyle] = useState<string>("wave");
-  // Briefly true after a Translate-mode dictation that was already in the target
-  // language (nothing to translate) so the pill can flag "you're still on Translate".
-  const [warn, setWarn] = useState(false);
+  const [notice, setNotice] = useState<PillNotice | null>(null);
+  const langRef = useRef<Lang>("en");
+  const noticeTimer = useRef<number | undefined>(undefined);
   const self = getCurrentWindow();
 
+  function showNotice(n: PillNotice) {
+    window.clearTimeout(noticeTimer.current);
+    setNotice(n);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS[n.kind]);
+    finish(NOTICE_MS[n.kind]); // hold the pill open long enough to read it
+  }
+
   useEffect(() => {
+    const t = (key: StringKey) => translate(langRef.current, key);
     const offStart = listen("rec-started", async () => {
+      window.clearTimeout(noticeTimer.current);
+      setNotice(null);
       setMode("recording");
       try {
         await self.show();
@@ -36,17 +61,30 @@ export default function Overlay() {
       }
     });
     const offStop = listen("rec-stopped", () => setMode("processing"));
-    const offResult = listen<{ translate_warning?: boolean }>("dictation-result", (e) => {
-      if (e.payload?.translate_warning) {
-        setWarn(true);
-        window.setTimeout(() => setWarn(false), 2800);
-        finish(2800); // hold the pill open long enough to read the warning
+    const offResult = listen<RecordingResult>("dictation-result", (e) => {
+      const r = e.payload;
+      if (r?.paste_blocked) {
+        showNotice({ kind: "clipboard", label: "pill_on_clipboard", detail: t("paste_blocked_notice") });
+      } else if (r?.translate_warning) {
+        showNotice({ kind: "translate", label: "pill_on_translate", detail: t("translate_warning_notice") });
+      } else if (r?.enhance_rejected) {
+        showNotice({ kind: "raw", label: "pill_typed_raw", detail: t("enhance_rejected_notice") });
+      } else if (r?.enhance_failed) {
+        showNotice({ kind: "raw", label: "pill_typed_raw", detail: t("enhance_offline_notice") });
       } else {
         finish();
       }
     });
-    const offError = listen("rec-error", () => finish());
-    const offCanceled = listen("rec-canceled", () => finish());
+    const offError = listen<string>("rec-error", (e) => {
+      showNotice({ kind: "failed", label: "pill_failed", detail: String(e.payload ?? "") });
+    });
+    const offCanceled = listen<string>("rec-canceled", (e) => {
+      if (e.payload === "no-speech") {
+        showNotice({ kind: "silent", label: "pill_no_speech", detail: t("no_speech_notice") });
+      } else {
+        finish();
+      }
+    });
     return () => {
       offStart.then((f) => f());
       offStop.then((f) => f());
@@ -65,11 +103,13 @@ export default function Overlay() {
       .then((s) => {
         applyAccent(s.accent);
         setPillStyle(s.pill_style || "wave");
+        langRef.current = s.ui_lang === "ar" ? "ar" : "en";
       })
       .catch(() => {});
     const off = listen<Settings>("settings-changed", (e) => {
       applyAccent(e.payload.accent);
       setPillStyle(e.payload.pill_style || "wave");
+      langRef.current = e.payload.ui_lang === "ar" ? "ar" : "en";
     });
     return () => {
       off.then((f) => f());
@@ -236,6 +276,8 @@ export default function Overlay() {
     );
   }
 
+  const look = notice ? NOTICE_LOOK[notice.kind] : null;
+
   return (
     <div
       data-tauri-drag-region
@@ -245,17 +287,21 @@ export default function Overlay() {
       }}
       className={[
         "flex h-screen w-screen cursor-grab items-center gap-2 rounded-full border bg-ink-900/65 px-2 shadow-2xl backdrop-blur-xl transition-colors",
-        warn ? "border-amber-400/70" : "border-white/15",
+        look ? look.border : "border-white/15",
       ].join(" ")}
     >
-      {warn ? (
+      {notice && look ? (
         <div
           data-tauri-drag-region
-          className="flex h-4 flex-1 items-center justify-center gap-1 text-amber-300"
-          title="You spoke the language you're translating to. Switch mode?"
+          role="status"
+          dir={langRef.current === "ar" ? "rtl" : "ltr"}
+          className={`flex h-4 min-w-0 flex-1 items-center justify-center gap-1 ${look.text}`}
+          title={notice.detail}
         >
-          <Languages className="h-3 w-3 shrink-0" />
-          <span className="text-[10px] font-medium leading-none">On Translate</span>
+          <look.Icon className="h-3 w-3 shrink-0" />
+          <span className="truncate text-[10px] font-medium leading-none">
+            {translate(langRef.current, notice.label)}
+          </span>
         </div>
       ) : (
         renderVisual()

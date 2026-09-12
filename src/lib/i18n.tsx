@@ -408,6 +408,11 @@ const STRINGS = {
     en: "Put diacritics back on common European loanwords in English output.",
     ar: "يعيد العلامات التشكيلية على الكلمات الأوروبية الدخيلة في المخرجات الإنجليزية.",
   },
+  pill_on_clipboard: { en: "Press Ctrl+V", ar: "اضغط Ctrl+V" },
+  pill_on_translate: { en: "On Translate", ar: "وضع الترجمة" },
+  pill_typed_raw: { en: "Typed as spoken", ar: "كُتب كما قلته" },
+  pill_no_speech: { en: "No speech heard", ar: "لم أسمع كلاماً" },
+  pill_failed: { en: "Didn't work", ar: "لم ينجح" },
 
   // Onboarding walkthrough
   ob_skip: { en: "Skip", ar: "تخطّي" },

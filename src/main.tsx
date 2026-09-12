@@ -24,6 +24,7 @@ if (isOverlay) document.documentElement.classList.add("overlay");
 const MascotPreview = React.lazy(() => import("./dev/MascotPreview"));
 const SettingsPreview = React.lazy(() => import("./dev/SettingsPreview"));
 const FirstRunPreview = React.lazy(() => import("./dev/FirstRunPreview"));
+const PillPreview = React.lazy(() => import("./dev/PillPreview"));
 const preview = import.meta.env.DEV
   ? new URLSearchParams(window.location.search).get("preview")
   : null;
@@ -41,6 +42,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     ) : preview === "first-run" ? (
       <Suspense fallback={null}>
         <FirstRunPreview />
+      </Suspense>
+    ) : preview === "pill" ? (
+      <Suspense fallback={null}>
+        <PillPreview />
       </Suspense>
     ) : isOverlay ? (
       <Overlay />
