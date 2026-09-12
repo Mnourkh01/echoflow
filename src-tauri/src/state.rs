@@ -244,6 +244,7 @@ impl AppState {
         translate: bool,
         dialect: &str,
         vocab: &str,
+        mixed: bool,
     ) -> Result<Transcript> {
         self.touch();
         let mut guard = self.engine.lock();
@@ -261,7 +262,7 @@ impl AppState {
         let result = guard
             .as_ref()
             .expect("engine loaded above")
-            .transcribe(audio_16k, language_mode, translate, dialect, vocab, &self.cancel_transcribe);
+            .transcribe(audio_16k, language_mode, translate, dialect, vocab, mixed, &self.cancel_transcribe);
         self.touch();
         // Leave a memory trail in the log so a slow leak over hours of heavy use
         // is visible after the fact (the "becomes unresponsive after ~2h" report).

@@ -66,6 +66,12 @@ impl Db {
             "ALTER TABLE recordings ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
             [],
         );
+        // Per-take diagnostics, never shown: Whisper's own text and a small JSON
+        // of how the take was processed, so the language and AI-step behavior can
+        // be judged on real use. Deleted with the row by the retention purge.
+        for column in ["raw_text TEXT", "diag TEXT"] {
+            let _ = conn.execute(&format!("ALTER TABLE recordings ADD COLUMN {column}"), []);
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -83,13 +89,15 @@ impl Db {
         sample_rate: u32,
         full_text: &str,
         segments: &[Segment],
+        raw_text: Option<&str>,
+        diag: Option<&str>,
     ) -> Result<i64> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO recordings
-                (created_at, duration_ms, language, language_confidence, model, audio_path, sample_rate, full_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                (created_at, duration_ms, language, language_confidence, model, audio_path, sample_rate, full_text, raw_text, diag)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 created_at,
                 duration_ms,
@@ -98,7 +106,9 @@ impl Db {
                 model,
                 audio_path,
                 sample_rate,
-                full_text
+                full_text,
+                raw_text,
+                diag
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -391,12 +401,43 @@ mod tests {
 
     fn add(db: &Db, created_at: &str, pinned: bool) -> i64 {
         let id = db
-            .insert_recording(created_at, 1000, "en", 1.0, "m", &format!("x-{created_at}.wav"), 16_000, "t", &[])
+            .insert_recording(created_at, 1000, "en", 1.0, "m", &format!("x-{created_at}.wav"), 16_000, "t", &[], None, None)
             .unwrap();
         if pinned {
             db.set_pinned(id, true).unwrap();
         }
         id
+    }
+
+    #[test]
+    fn old_database_gains_the_diagnostics_columns() {
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!("echoflow-old-{}-{n}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE recordings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL, language TEXT NOT NULL,
+                    language_confidence REAL NOT NULL DEFAULT 0, model TEXT NOT NULL,
+                    audio_path TEXT NOT NULL, sample_rate INTEGER NOT NULL, full_text TEXT NOT NULL);
+                 INSERT INTO recordings (created_at, duration_ms, language, model, audio_path, sample_rate, full_text)
+                    VALUES ('2026-09-01T10:00:00Z', 1000, 'en', 'm', 'old.wav', 16000, 'old take');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let id = db
+            .insert_recording("2026-09-12T10:00:00Z", 1000, "en", 1.0, "m", "new.wav", 16_000, "Typed.", &[], Some("typed"), Some(r#"{"ai":"ok"}"#))
+            .unwrap();
+        let conn = db.conn.lock();
+        let row = |id: i64| -> (Option<String>, Option<String>) {
+            conn.query_row("SELECT raw_text, diag FROM recordings WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+        assert_eq!(row(1), (None, None), "old rows keep working");
+        assert_eq!(row(id), (Some("typed".into()), Some(r#"{"ai":"ok"}"#.into())));
     }
 
     fn ids(v: &[(i64, String)]) -> Vec<i64> {

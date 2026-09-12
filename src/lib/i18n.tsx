@@ -408,6 +408,11 @@ const STRINGS = {
     en: "Put diacritics back on common European loanwords in English output.",
     ar: "يعيد العلامات التشكيلية على الكلمات الأوروبية الدخيلة في المخرجات الإنجليزية.",
   },
+  mix_arabic: { en: "I mix Arabic into English", ar: "أخلط العربي مع الإنجليزي" },
+  mix_arabic_desc: {
+    en: "With English selected, keep the Arabic words you say so Clean writing and Prompt mode can translate them. Test it with your own voice.",
+    ar: "مع اختيار الإنجليزي، يحتفظ بالكلمات العربية التي تقولها حتى يترجمها تحسين الصياغة ووضع البرومبت. جرّبه بصوتك.",
+  },
   hotkey_plain_warning: {
     en: "Without Ctrl, Alt or Win, this key stops typing in every other app while EchoFlow runs.",
     ar: "بدون Ctrl أو Alt أو Win، هذا الحرف لن يُكتب في أي برنامج آخر ما دام EchoFlow يعمل.",

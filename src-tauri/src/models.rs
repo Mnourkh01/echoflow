@@ -77,6 +77,7 @@ pub struct Settings {
     pub translate_from: Option<String>,
     pub restore_diacritics: bool, // put accents back on English loanwords (café, résumé)
     pub voice_commands: bool,  // raw mode: spoken "new line"/"period"/... become real punctuation
+    pub mix_arabic: bool,      // English lock + AI step: mixed-script Whisper prompt so spoken Arabic reaches the AI
     pub ai_engine: String,    // "cli" (default) | "api"
     pub cli_command: String,  // CLI used when ai_engine == "cli" (e.g. "claude")
     pub cli_model: String,    // model for the CLI path: "haiku" (default) | "sonnet" | "opus"
@@ -121,6 +122,7 @@ impl Default for Settings {
             translate_from: None,
             restore_diacritics: true,
             voice_commands: false,
+            mix_arabic: false,
             ai_engine: "cli".to_string(),
             cli_command: "claude".to_string(),
             cli_model: "haiku".to_string(),

@@ -29,6 +29,9 @@ pub struct Transcript {
     pub language: String,
     pub language_confidence: f32,
     pub segments: Vec<Segment>,
+    /// Mean log-probability of the text tokens. whisper.cpp does not say when
+    /// its temperature fallback fired; a low value is the visible trace of it.
+    pub avg_logprob: Option<f32>,
 }
 
 pub struct WhisperEngine {
@@ -71,6 +74,8 @@ impl WhisperEngine {
     /// `translate` = true makes Whisper output English (translate task).
     /// `cancel` aborts the decode when set (the user's cancel button); the
     /// function then returns an error containing "canceled".
+    /// `mixed` adds the mixed-language prime to English decodes.
+    #[allow(clippy::too_many_arguments)]
     pub fn transcribe(
         &self,
         audio_16k_mono: &[f32],
@@ -78,6 +83,7 @@ impl WhisperEngine {
         translate: bool,
         dialect: &str,
         vocab: &str,
+        mixed: bool,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
         // Thread count: measured on the 12700H (6P+8E hybrid), ggml gets SLOWER
@@ -127,7 +133,7 @@ impl WhisperEngine {
         let sr = crate::audio::TARGET_RATE as usize;
         let long = audio_16k_mono.len() > (LONG_AUDIO_SECS * sr as f32) as usize;
         if !long || language == "auto" {
-            return self.decode_buffer(audio_16k_mono, &language, confidence, translate, dialect, vocab, threads, cancel);
+            return self.decode_buffer(audio_16k_mono, &language, confidence, translate, dialect, vocab, mixed, threads, cancel);
         }
 
         let bounds = split_at_silence(audio_16k_mono, sr);
@@ -135,12 +141,14 @@ impl WhisperEngine {
             audio_16k_mono.len() / sr, bounds.len());
         let mut full = String::new();
         let mut segments = Vec::new();
+        let mut logprobs: Vec<f32> = Vec::new();
         for (ci, &(lo, hi)) in bounds.iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow!("canceled"));
             }
             let part =
-                self.decode_buffer(&audio_16k_mono[lo..hi], &language, confidence, translate, dialect, vocab, threads, cancel)?;
+                self.decode_buffer(&audio_16k_mono[lo..hi], &language, confidence, translate, dialect, vocab, mixed, threads, cancel)?;
+            logprobs.extend(part.avg_logprob);
             let offset_ms = (lo as f32 / sr as f32 * 1000.0) as i64;
             for mut seg in part.segments {
                 seg.start_ms += offset_ms;
@@ -159,6 +167,7 @@ impl WhisperEngine {
             language,
             language_confidence: confidence,
             segments,
+            avg_logprob: (!logprobs.is_empty()).then(|| logprobs.iter().sum::<f32>() / logprobs.len() as f32),
         })
     }
 
@@ -175,6 +184,7 @@ impl WhisperEngine {
         translate: bool,
         dialect: &str,
         vocab: &str,
+        mixed: bool,
         threads: i32,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
@@ -249,7 +259,7 @@ impl WhisperEngine {
         //     spellings are recognized instead of misheard. Applies to any language.
         // `prompt` must outlive `params` (which borrows it) until `full()` runs, so
         // it's bound here in the same scope.
-        let prompt = build_initial_prompt(language, translate, dialect, vocab);
+        let prompt = build_initial_prompt(language, translate, dialect, vocab, mixed);
         if let Some(ref p) = prompt {
             params.set_initial_prompt(p);
         }
@@ -268,7 +278,18 @@ impl WhisperEngine {
 
         let mut segments = Vec::new();
         let mut full = String::new();
+        // Text tokens only: ids from end-of-text up are timestamps and markers.
+        let eot = self.ctx.token_eot();
+        let (mut logprob_sum, mut logprob_n) = (0.0f64, 0u32);
         for i in 0..n {
+            for j in 0..state.full_n_tokens(i).unwrap_or(0) {
+                if let Ok(tok) = state.full_get_token_data(i, j) {
+                    if tok.id < eot {
+                        logprob_sum += tok.plog as f64;
+                        logprob_n += 1;
+                    }
+                }
+            }
             let text = state.full_get_segment_text_lossy(i).unwrap_or_default();
             let t0 = state.full_get_segment_t0(i).unwrap_or(0) * 10; // cs -> ms
             let t1 = state.full_get_segment_t1(i).unwrap_or(0) * 10;
@@ -303,6 +324,7 @@ impl WhisperEngine {
             language,
             language_confidence: confidence,
             segments,
+            avg_logprob: (logprob_n > 0).then(|| (logprob_sum / logprob_n as f64) as f32),
         })
     }
 }
@@ -431,10 +453,26 @@ fn dialect_prompt(dialect: &str) -> &'static str {
 /// labelled meta-line like "Vocabulary: ..." reads as foreign text and biases
 /// far less than the terms appearing plainly. The cap cuts at a term boundary
 /// so a truncated list never ends mid-name.
-pub(crate) fn build_initial_prompt(language: &str, translate: bool, dialect: &str, vocab: &str) -> Option<String> {
+/// A short code-switched line. In the prompt of a forced-English decode it makes
+/// Whisper write spoken Arabic in Arabic script instead of dropping it or
+/// guessing English words, so the AI step can translate it. Measured on mixed
+/// clips and on the user's own English takes (no Arabic appeared in those).
+pub(crate) const MIXED_PRIME: &str = "So يعني I think we should, خلينا نشوف, maybe change the design شوي.";
+
+pub(crate) fn build_initial_prompt(
+    language: &str,
+    translate: bool,
+    dialect: &str,
+    vocab: &str,
+    mixed: bool,
+) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if language == "ar" && !translate {
         parts.push(dialect_prompt(dialect).to_string());
+    }
+    // Before the vocabulary: whisper.cpp keeps the END of a long prompt.
+    if mixed && language == "en" && !translate {
+        parts.push(MIXED_PRIME.to_string());
     }
     let terms = crate::text::vocab_terms(vocab);
     if !terms.is_empty() {
@@ -537,17 +575,27 @@ mod tests {
         }
     }
 
-    /// Decode each clip in ECHOFLOW_REPLAY_LANG (default "en").
+    /// Decode each clip in ECHOFLOW_REPLAY_LANG (default "en"), with the custom
+    /// vocabulary from ECHOFLOW_REPLAY_VOCAB (default none) and the mixed prime
+    /// when ECHOFLOW_REPLAY_MIXED=1.
     #[test]
     #[ignore]
     fn replay_decode() {
         let (engine, files) = replay_setup();
         let lang = std::env::var("ECHOFLOW_REPLAY_LANG").unwrap_or_else(|_| "en".into());
+        let vocab = std::env::var("ECHOFLOW_REPLAY_VOCAB").unwrap_or_default();
+        let mixed = std::env::var("ECHOFLOW_REPLAY_MIXED").is_ok_and(|v| v == "1");
         let cancel = Arc::new(AtomicBool::new(false));
         for f in files {
             let audio = read_wav_16k_mono(&f);
-            let t = engine.transcribe(&audio, &lang, false, "auto", "", &cancel).unwrap();
-            eprintln!("{} [{lang}] {}", f.file_name().unwrap().to_string_lossy(), t.full_text);
+            let t = engine.transcribe(&audio, &lang, false, "auto", &vocab, mixed, &cancel).unwrap();
+            eprintln!(
+                "{} [{lang}{}] logprob {:?} | {}",
+                f.file_name().unwrap().to_string_lossy(),
+                if mixed { " +mixed" } else { "" },
+                t.avg_logprob,
+                t.full_text
+            );
         }
     }
 
@@ -568,7 +616,7 @@ mod tests {
         };
         for f in files {
             let clean = read_wav_16k_mono(&f);
-            let reference = engine.transcribe(&clean, "en", false, "auto", "", &cancel).unwrap().full_text;
+            let reference = engine.transcribe(&clean, "en", false, "auto", "", false, &cancel).unwrap().full_text;
             eprintln!("\n{}  reference: {reference}", f.file_name().unwrap().to_string_lossy());
             for gain in [0.03f32, 0.01, 0.004] {
                 let mut samples: Vec<f32> = (0..16_000).map(|_| noise(0.0005)).collect();
@@ -587,7 +635,7 @@ mod tests {
                         continue;
                     }
                     let prepared = crate::audio::prepare_for_whisper(&captured, denoise);
-                    let text = engine.transcribe(&prepared, "en", false, "auto", "", &cancel).unwrap().full_text;
+                    let text = engine.transcribe(&prepared, "en", false, "auto", "", false, &cancel).unwrap().full_text;
                     eprintln!(
                         "  gain {gain:<5} denoise {denoise:<5} raw_rms {raw_rms:.4} raw_peak {raw_peak:.4} kept {:.1}s/{:.1}s overlap {:.2} | {text}",
                         prepared.len() as f32 / 16_000.0,
@@ -602,27 +650,44 @@ mod tests {
     #[test]
     fn initial_prompt_combines_dialect_and_vocab() {
         // English with vocab → only the bare terms (no meta label).
-        let p = super::build_initial_prompt("en", false, "auto", "EchoFlow, Mnour, Tauri").unwrap();
+        let p = super::build_initial_prompt("en", false, "auto", "EchoFlow, Mnour, Tauri", false).unwrap();
         assert!(p.contains("EchoFlow") && p.contains("Tauri"));
         assert!(!p.contains("Vocabulary"), "no meta label in the prompt");
         assert!(!p.contains("محادثة"), "no Arabic prime for English");
 
         // Arabic with vocab → both the colloquial prime and the terms.
-        let p = super::build_initial_prompt("ar", false, "egyptian", "القاهرة").unwrap();
+        let p = super::build_initial_prompt("ar", false, "egyptian", "القاهرة", false).unwrap();
         assert!(p.contains("المصرية"), "Arabic prime present");
         assert!(p.contains("القاهرة"));
 
         // Nothing to bias → None (so we never set an empty prompt).
-        assert!(super::build_initial_prompt("en", false, "auto", "   ").is_none());
+        assert!(super::build_initial_prompt("en", false, "auto", "   ", false).is_none());
         // Translate task skips the Arabic prime even for ar.
-        assert!(super::build_initial_prompt("ar", true, "auto", "").is_none());
+        assert!(super::build_initial_prompt("ar", true, "auto", "", false).is_none());
+    }
+
+    #[test]
+    fn mixed_prime_only_joins_english_decodes_and_sits_before_the_vocab() {
+        let vocab = "foloprint, Opti4Club";
+        let p = super::build_initial_prompt("en", false, "auto", vocab, true).unwrap();
+        let prime_at = p.find(super::MIXED_PRIME).expect("prime present");
+        let vocab_at = p.find("foloprint").expect("vocab present");
+        assert!(prime_at < vocab_at, "{p}");
+        assert!(super::build_initial_prompt("en", false, "auto", "", true).unwrap() == super::MIXED_PRIME);
+
+        // Off, or any other decode, is today's prompt byte for byte.
+        for (lang, translate) in [("en", false), ("ar", false), ("ar", true), ("fr", false)] {
+            let on = super::build_initial_prompt(lang, translate, "auto", vocab, lang != "en");
+            let off = super::build_initial_prompt(lang, translate, "auto", vocab, false);
+            assert_eq!(on, off, "{lang}/{translate}");
+        }
     }
 
     #[test]
     fn initial_prompt_caps_at_term_boundary() {
         // A long list truncates between terms, never mid-name.
         let vocab: Vec<String> = (0..100).map(|i| format!("TermNumber{i:02}Xyz")).collect();
-        let p = super::build_initial_prompt("en", false, "auto", &vocab.join(", ")).unwrap();
+        let p = super::build_initial_prompt("en", false, "auto", &vocab.join(", "), false).unwrap();
         assert!(p.chars().count() <= 401, "prompt stays capped");
         let body = p.trim_end_matches('.');
         assert!(
@@ -678,7 +743,7 @@ mod tests {
         // Cancel already requested: the decode must abort, not produce text.
         let cancel = Arc::new(AtomicBool::new(true));
         let err = engine
-            .transcribe(&audio, "en", false, "auto", "", &cancel)
+            .transcribe(&audio, "en", false, "auto", "", false, &cancel)
             .expect_err("pre-canceled decode must fail");
         assert!(err.to_string().contains("canceled"), "got: {err}");
     }
@@ -694,7 +759,7 @@ mod tests {
         let engine = WhisperEngine::load(&model, "small").expect("load model");
         let audio = read_wav_16k_mono(&wav);
         let cancel = Arc::new(AtomicBool::new(false));
-        let t = engine.transcribe(&audio, "auto", false, "auto", "", &cancel).expect("transcribe");
+        let t = engine.transcribe(&audio, "auto", false, "auto", "", false, &cancel).expect("transcribe");
         eprintln!("detected lang = {}, text = {}", t.language, t.full_text);
         assert!(!t.full_text.trim().is_empty(), "expected non-empty text");
         assert_eq!(t.language, "en", "jfk sample should detect as English");

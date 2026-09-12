@@ -122,6 +122,34 @@ fn has_words(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
 }
 
+/// The mixed prime kept Arabic words for an AI step that then failed or was
+/// rejected. Typing that under the English lock would put Arabic script in his
+/// English text, so the take is decoded again without the prime.
+fn needs_plain_redecode(primed: bool, enhance_rejected: bool, enhance_failed: bool, text: &str) -> bool {
+    primed && (enhance_rejected || enhance_failed) && crate::text::is_arabic_text(text)
+}
+
+/// Stored with each take, never shown: how it was decoded and how the AI step
+/// ended, so language problems can be judged on real use. No dictation text.
+fn take_diagnostics(
+    decode_lang: &str,
+    primed: bool,
+    ai_outcome: &str,
+    tail_coverage: Option<f32>,
+    avg_logprob: Option<f32>,
+) -> String {
+    // Through f64, or serde_json prints the f32 widening noise (0.8569999933).
+    let round = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
+    serde_json::json!({
+        "decode_lang": decode_lang,
+        "mixed_prime": primed,
+        "ai": ai_outcome,
+        "tail_coverage": tail_coverage.map(round),
+        "avg_logprob": avg_logprob.map(round),
+    })
+    .to_string()
+}
+
 /// ISO code for a language NAME, or None when the name is not one we know.
 fn strict_lang_code(name: &str) -> Option<&'static str> {
     Some(match name.trim().to_ascii_lowercase().as_str() {
@@ -720,7 +748,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let denoise = state.settings.read().noise_suppression;
     let audio_16k = audio::prepare_for_whisper(&captured, denoise);
 
-    let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target, cfg) = {
+    let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target, mix_arabic, cfg) = {
         let s = state.settings.read();
         (
             s.model.clone(),
@@ -733,6 +761,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             s.voice_commands,
             s.output_mode.clone(),
             s.translate_target.clone(),
+            s.mix_arabic,
             EnhanceCfg::from_settings(&s),
         )
     };
@@ -740,6 +769,9 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     if decode_lang != lang_mode {
         log::info!("{output_mode}: listening for '{decode_lang}' (translate source), not '{lang_mode}'");
     }
+    // Opt-in mixed Arabic + English: only an English-locked take whose AI step
+    // can translate the Arabic it keeps. Raw mode would type Arabic script.
+    let primed = mix_arabic && decode_lang == "en" && matches!(output_mode.as_str(), "polish" | "prompt");
 
     // Always transcribe in the spoken language first. The CLI step does the
     // language work (it handles Arabic dialects far better than Whisper's weak
@@ -747,7 +779,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // A user cancel (the cancel button while transcribing) surfaces as a decode
     // error with the cancel flag set; treat it as a quiet discard, not an error.
     let mut transcript =
-        match state.transcribe(&audio_16k, &model, &decode_lang, false, &dialect, &vocab) {
+        match state.transcribe(&audio_16k, &model, &decode_lang, false, &dialect, &vocab, primed) {
             Ok(t) => t,
             Err(_) if state.transcribe_canceled() => {
                 log::info!("transcription canceled by user; clip discarded");
@@ -759,10 +791,11 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let source_lang = transcript.language.clone();
 
     // A quiet clip that decodes to a stock Whisper phrase or to its own prompt
-    // (the Arabic dialect prime, the vocabulary list) held no speech.
-    let whisper_prompt = crate::whisper::build_initial_prompt(&source_lang, false, &dialect, &vocab);
+    // (the Arabic dialect prime, the vocabulary list, the mixed prime) held no speech.
+    let whisper_prompt = crate::whisper::build_initial_prompt(&source_lang, false, &dialect, &vocab, false);
     if raw_rms < QUIET_CLIP_RMS
-        && crate::text::is_silence_artifact(&transcript.full_text, whisper_prompt.as_deref())
+        && (crate::text::is_silence_artifact(&transcript.full_text, whisper_prompt.as_deref())
+            || (primed && crate::text::is_prompt_line_leak(&transcript.full_text, crate::whisper::MIXED_PRIME)))
     {
         log::info!("discarded recording: silence artifact {:?}", transcript.full_text);
         return Ok(None);
@@ -790,24 +823,57 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // Set when the AI replied with something other than the user's words.
     let mut enhance_rejected = false;
 
+    // Whisper's own text (after the vocabulary pass), kept for the per-take
+    // diagnostics before any AI step replaces it.
+    let raw_text = transcript.full_text.clone();
+    let mut ai_outcome = "none";
+    let mut tail_cov: Option<f32> = None;
+
     // translate / polish / prompt run the transcript through the AI engine.
     let cli_system: Option<String> = if output_mode == "translate"
         && Some(source_lang.as_str()) == strict_lang_code(&translate_target)
     {
         translate_warning = true;
+        ai_outcome = "skipped";
         None
     } else {
         cfg.system_prompt()
     };
+    // A reply for an English target that is still mostly Arabic is never typed.
+    let expects_english = match output_mode.as_str() {
+        "translate" => strict_lang_code(&translate_target) == Some("en"),
+        "polish" | "prompt" => cfg.lock == enhance::Lock::English,
+        _ => false,
+    };
     if let Some(system) = cli_system {
         if has_words(&transcript.full_text) {
             let started = Instant::now();
-            match run_enhance(state, &output_mode, &system, &transcript.full_text, warm) {
+            let reply = run_enhance(state, &output_mode, &system, &transcript.full_text, warm)
+                .and_then(|out| {
+                    if expects_english && crate::text::is_arabic_text(&out) {
+                        Err(EnhanceErr::Rejected(format!(
+                            "reply not in English ({:.0}% Arabic letters)",
+                            crate::text::arabic_share(&out) * 100.0
+                        )))
+                    } else {
+                        Ok(out)
+                    }
+                });
+            match reply {
                 Ok(out) => {
                     log::info!(
                         "{output_mode} enhance took {} ms",
                         started.elapsed().as_millis()
                     );
+                    ai_outcome = "ok";
+                    if output_mode != "translate" {
+                        // Measured, not enforced yet: how much of the end of a
+                        // long take survived the rewrite (low = the end was cut).
+                        tail_cov = crate::text::tail_coverage(&transcript.full_text, &out);
+                        if let Some(c) = tail_cov {
+                            log::info!("{output_mode} tail coverage {c:.2}");
+                        }
+                    }
                     transcript.full_text = out;
                     transcript.segments.clear(); // enhanced output no longer maps to timings
                     // Only Translate changes the language. Clean writing / Prompt
@@ -830,10 +896,12 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                     // their own words instead; no offline fallback, nothing failed.
                     log::warn!("{output_mode} reply rejected, kept the raw transcript: {why}");
                     enhance_rejected = true;
+                    ai_outcome = "rejected";
                 }
                 Err(EnhanceErr::Failed(e)) => {
                     log::warn!("{output_mode} enhance failed: {e}");
                     enhance_failed = true;
+                    ai_outcome = "failed";
                     // Whisper's own translate task is an offline fallback only when
                     // English is the target and the model can translate at all:
                     // turbo models were trained without translation data and hand
@@ -844,7 +912,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                         && !model.contains("turbo")
                     {
                         if let Ok(mut t2) =
-                            state.transcribe(&audio_16k, &model, &decode_lang, true, &dialect, &vocab)
+                            state.transcribe(&audio_16k, &model, &decode_lang, true, &dialect, &vocab, false)
                         {
                             if crate::text::arabic_share(&t2.full_text) < 0.1 {
                                 t2.language = "en".to_string();
@@ -864,6 +932,23 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                     // polish / prompt: keep the native transcript (user's words).
                 }
             }
+        }
+    }
+
+    if needs_plain_redecode(primed, enhance_rejected, enhance_failed, &transcript.full_text) {
+        match state.transcribe(&audio_16k, &model, &decode_lang, false, &dialect, &vocab, false) {
+            Ok(mut plain) => {
+                if !vocab.trim().is_empty() {
+                    plain.full_text = crate::text::apply_custom_vocab(&plain.full_text, &vocab);
+                    for seg in &mut plain.segments {
+                        seg.text = crate::text::apply_custom_vocab(&seg.text, &vocab);
+                    }
+                }
+                log::info!("mixed prime: no AI result, re-decoded without the prime");
+                transcript = plain;
+            }
+            Err(_) if state.transcribe_canceled() => return Ok(None),
+            Err(e) => log::warn!("re-decode without the mixed prime failed: {e}"),
         }
     }
 
@@ -907,6 +992,8 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             audio::TARGET_RATE,
             &transcript.full_text,
             &transcript.segments,
+            Some(&raw_text),
+            Some(&take_diagnostics(&decode_lang, primed, ai_outcome, tail_cov, transcript.avg_logprob)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -1665,6 +1752,29 @@ mod tests {
     }
 
     #[test]
+    fn primed_arabic_is_decoded_again_only_when_the_ai_step_did_not_deliver() {
+        let arabic = "Can you check the report? بكرة الصبح إن شاء الله and send it.";
+        assert!(needs_plain_redecode(true, true, false, arabic), "rejected");
+        assert!(needs_plain_redecode(true, false, true, arabic), "failed");
+        assert!(!needs_plain_redecode(true, false, false, arabic), "AI step delivered");
+        assert!(!needs_plain_redecode(false, true, true, arabic), "prime not used");
+        assert!(!needs_plain_redecode(true, true, true, "Send the report to محمد today."), "one Arabic name");
+    }
+
+    #[test]
+    fn take_diagnostics_is_small_json_without_text() {
+        let d = take_diagnostics("en", true, "ok", Some(0.8571), Some(-0.31234));
+        let v: serde_json::Value = serde_json::from_str(&d).unwrap();
+        assert_eq!(v["decode_lang"], "en");
+        assert_eq!(v["mixed_prime"], true);
+        assert_eq!(v["ai"], "ok");
+        assert_eq!(v["tail_coverage"], 0.857);
+        assert_eq!(v["avg_logprob"], -0.312);
+        let none = take_diagnostics("ar", false, "none", None, None);
+        assert!(none.contains(r#""tail_coverage":null"#), "{none}");
+    }
+
+    #[test]
     fn purge_expired_removes_rows_and_audio_only_when_settings_are_trusted() {
         for trusted in [true, false] {
             let state = temp_state(7, trusted);
@@ -1673,7 +1783,7 @@ mod tests {
             let old = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
             let id = state
                 .db
-                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[])
+                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[], None, None)
                 .unwrap();
             let gone = purge_expired(&state);
             if trusted {
@@ -1841,7 +1951,7 @@ mod tests {
             let old = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
             let id = state
                 .db
-                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[])
+                .insert_recording(&old, 1000, "en", 1.0, "m", &wav.to_string_lossy(), 16_000, "t", &[], None, None)
                 .unwrap();
 
             assert!(apply_model(&state, "medium").is_err(), "not downloaded");

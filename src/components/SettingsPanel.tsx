@@ -821,6 +821,15 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             onChange={(v) => patch({ restore_diacritics: v })}
           />
 
+          {settings.language_mode === "en" && (
+            <Toggle
+              label={t("mix_arabic")}
+              desc={t("mix_arabic_desc")}
+              checked={settings.mix_arabic}
+              onChange={(v) => patch({ mix_arabic: v })}
+            />
+          )}
+
           <Toggle
             label={t("voice_commands")}
             desc={t("voice_commands_desc")}

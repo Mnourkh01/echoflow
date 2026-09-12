@@ -297,6 +297,124 @@ pub fn arabic_share(text: &str) -> f32 {
     }
 }
 
+/// True when a text would read as the wrong language under an English target:
+/// more than 15% Arabic letters and at least 12 of them, so one Arabic name in
+/// an English sentence does not count.
+pub fn is_arabic_text(text: &str) -> bool {
+    let arabic = text
+        .chars()
+        .filter(|c| matches!(c, '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}'))
+        .count();
+    arabic >= 12 && arabic_share(text) > 0.15
+}
+
+#[cfg(test)]
+mod arabic_text_tests {
+    use super::is_arabic_text;
+
+    #[test]
+    fn one_arabic_name_in_english_is_still_english() {
+        assert!(!is_arabic_text("Send the report to محمد today, please."));
+        assert!(!is_arabic_text("Send the report today, please."));
+        assert!(is_arabic_text("أريد أن أعدل الصفحة الرئيسية وأضيف زرا جديدا للتسجيل."));
+        assert!(is_arabic_text("Can you check the report? بكرة الصبح إن شاء الله and send it."));
+    }
+}
+
+/// True when a quiet decode is a leak of one prompt line (the mixed-language
+/// prime): it sits inside that line and either uses both scripts or covers most
+/// of it. Everyday runs the line happens to contain ("I think") are speech.
+pub fn is_prompt_line_leak(text: &str, line: &str) -> bool {
+    let t = normalize_words(text);
+    if t.is_empty() {
+        return false;
+    }
+    let l = normalize_words(line);
+    if !format!(" {l} ").contains(&format!(" {t} ")) {
+        return false;
+    }
+    let has_arabic = t.chars().any(|c| matches!(c, '\u{0600}'..='\u{06FF}'));
+    let has_latin = t.chars().any(|c| c.is_ascii_alphabetic());
+    let covered = t.split(' ').count() as f32 / l.split(' ').count().max(1) as f32;
+    (has_arabic && has_latin) || covered >= 0.6
+}
+
+const TAIL_STOP_WORDS: &[&str] = &[
+    "about", "actually", "also", "basically", "been", "could", "does", "done", "from",
+    "going", "gonna", "have", "here", "into", "just", "know", "like", "make", "made", "mean",
+    "more", "most", "much", "really", "should", "some", "something", "sort", "than", "that",
+    "their", "them", "then", "there", "these", "they", "thing", "things", "think", "this",
+    "those", "very", "want", "were", "what", "when", "which", "will", "with", "would", "yeah",
+    "your",
+];
+
+fn tail_content_words(s: &str) -> Vec<String> {
+    s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '\''))
+        .map(|w| w.trim_matches('\'').to_ascii_lowercase())
+        .filter(|w| w.len() >= 4 && !TAIL_STOP_WORDS.contains(&w.as_str()))
+        .map(|w| {
+            for suffix in ["ing", "ed", "es", "s"] {
+                if w.len() >= suffix.len() + 4 && w.ends_with(suffix) {
+                    return w[..w.len() - suffix.len()].to_string();
+                }
+            }
+            w
+        })
+        .collect()
+}
+
+/// Share of the content words in the last 30% of what was said (Latin script)
+/// that appear in the AI reply. A low value means the reply dropped the end of a
+/// long take. None when the take is short or not written in Latin script.
+pub fn tail_coverage(said: &str, reply: &str) -> Option<f32> {
+    let said_words = tail_content_words(said);
+    if said_words.len() < 12 {
+        return None;
+    }
+    let tail = &said_words[said_words.len() * 7 / 10..];
+    let reply_words: std::collections::HashSet<String> = tail_content_words(reply).into_iter().collect();
+    let hit = tail.iter().filter(|w| reply_words.contains(*w)).count();
+    Some(hit as f32 / tail.len() as f32)
+}
+
+#[cfg(test)]
+mod prompt_leak_and_coverage_tests {
+    use super::{is_prompt_line_leak, tail_coverage};
+    use crate::whisper::MIXED_PRIME;
+
+    #[test]
+    fn everyday_words_from_the_mixed_prime_are_speech() {
+        assert!(!is_prompt_line_leak("I think.", MIXED_PRIME));
+        assert!(!is_prompt_line_leak("Change the design.", MIXED_PRIME));
+        assert!(!is_prompt_line_leak("Send it today.", MIXED_PRIME));
+    }
+
+    #[test]
+    fn a_leaked_mixed_prime_is_caught() {
+        assert!(is_prompt_line_leak(MIXED_PRIME, MIXED_PRIME));
+        assert!(is_prompt_line_leak("So يعني I think", MIXED_PRIME));
+    }
+
+    #[test]
+    fn tail_coverage_flags_a_dropped_ending() {
+        let said = "the booking page lets people pick a past date so first fix that then check \
+the payment reminder emails and the invoice totals because the numbers looked wrong on friday \
+and finally clean up the admin table filters that keep resetting";
+        let full = "The booking page lets people pick a past date, so fix that first. Then check the \
+payment reminder emails and the invoice totals, because the numbers looked wrong on Friday. Finally, \
+clean up the admin table filters that keep resetting.";
+        let cut = "The booking page lets people pick a past date, so fix that first.";
+        assert!(tail_coverage(said, full).unwrap() >= 0.8);
+        assert!(tail_coverage(said, cut).unwrap() < 0.4);
+    }
+
+    #[test]
+    fn tail_coverage_skips_short_and_arabic_takes() {
+        assert_eq!(tail_coverage("please send the file", "Please send the file."), None);
+        assert_eq!(tail_coverage("ابعتلي الملف بكرة الصبح لو سمحت ضروري جداً قبل الاجتماع", "Send me the file."), None);
+    }
+}
+
 #[cfg(test)]
 mod arabic_share_tests {
     #[test]

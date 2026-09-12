@@ -84,7 +84,7 @@ fn bench_model() {
     let load_s = t.elapsed().as_secs_f64();
     let t = Instant::now();
     let tr = engine
-        .transcribe(&audio, "en", false, "auto", "", &Arc::new(AtomicBool::new(false)))
+        .transcribe(&audio, "en", false, "auto", "", false, &Arc::new(AtomicBool::new(false)))
         .expect("transcribe");
     let dec = t.elapsed().as_secs_f64();
     eprintln!(
@@ -113,7 +113,7 @@ fn soak_repeated_dictation() {
     for i in 1..=iters {
         let t = Instant::now();
         let _ = engine
-            .transcribe(&audio, "en", false, "auto", "", &Arc::new(AtomicBool::new(false)))
+            .transcribe(&audio, "en", false, "auto", "", false, &Arc::new(AtomicBool::new(false)))
             .expect("transcribe");
         let rss = rss_mb();
         eprintln!("{i},{},{:.1},{:.1}", t.elapsed().as_millis(), rss, rss - base);
@@ -153,7 +153,7 @@ fn soak_long_clip() {
     let engine = WhisperEngine::load(&model_path(), "small").expect("load model");
     let t = Instant::now();
     let tr = engine
-        .transcribe(&long, "en", false, "auto", "", &Arc::new(AtomicBool::new(false)))
+        .transcribe(&long, "en", false, "auto", "", false, &Arc::new(AtomicBool::new(false)))
         .expect("transcribe long clip");
     eprintln!(
         "# decoded {} min in {:.1}s, rss after = {:.1} MB, chars = {}",

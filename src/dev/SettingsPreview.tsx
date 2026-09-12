@@ -38,6 +38,7 @@ const settings: Settings = {
   translate_from: null,
   restore_diacritics: true,
   voice_commands: false,
+  mix_arabic: false,
   ai_engine: "cli",
   cli_command: "claude",
   cli_model: "sonnet",

@@ -76,6 +76,7 @@ export interface Settings {
   translate_from: string | null; // Translate source code; null = Arabic when the target is English, else auto
   restore_diacritics: boolean;
   voice_commands: boolean; // raw mode: spoken "new line"/"period"/... -> real punctuation
+  mix_arabic: boolean; // English lock + AI step: keep spoken Arabic words for the AI to translate
   ai_engine: "cli" | "api";
   cli_command: string;
   cli_model: string; // CLI model: "haiku" (default) | "sonnet" | "opus"
