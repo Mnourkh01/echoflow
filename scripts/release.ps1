@@ -1,6 +1,8 @@
-# EchoFlow release: build a signed installer + publish a GitHub Release so installed
-# apps auto-update. Run AFTER bumping `version` in tauri.conf.json, Cargo.toml, and
-# package.json to the same value.
+# EchoFlow release: build a signed installer + publish a GitHub Release in the public
+# releases repo so installed apps auto-update. The source repo is private and the
+# updater fetches latest.json without auth, so releases there are invisible to it.
+# Run AFTER bumping `version` in tauri.conf.json, Cargo.toml, and package.json to
+# the same value.
 #
 #   powershell -File scripts\release.ps1 -Version 0.1.1 -Notes "What changed"
 #
@@ -10,7 +12,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Version,
   [string]$Notes = "Bug fixes and improvements.",
-  [string]$Repo = "Mnourkh01/echoflow"
+  [string]$Repo = "Mnourkh01/echoflow-releases"
 )
 # NOTE: 'Continue', not 'Stop'. Native tools (npm/cargo/tauri/gh) print progress to
 # stderr; under 'Stop' PowerShell 5.1 turns that into a terminating NativeCommandError
@@ -68,4 +70,11 @@ $manifest = [ordered]@{
 # 5. Publish the release (installer + manifest). Endpoint points at /latest/download/latest.json.
 gh release create "v$Version" $setup.FullName "$root\latest.json" --repo $Repo --title "EchoFlow v$Version" --notes $Notes
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+
+# 6. Tag the source commit the installer was built from. The release lives in $Repo,
+#    so nothing else tags this repo.
+git tag "v$Version"
+if ($LASTEXITCODE -ne 0) { throw "git tag v$Version failed" }
+git push origin "v$Version"
+if ($LASTEXITCODE -ne 0) { throw "pushing tag v$Version failed" }
 Write-Output "Released v${Version}: $($setup.Name)"

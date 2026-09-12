@@ -1123,7 +1123,7 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
             <p className="mt-1.5 text-xs text-ink-500">
               {t("manual_dl")}{" "}
               <span className="selectable text-accent-soft">
-                github.com/Mnourkh01/echoflow/releases/latest
+                github.com/Mnourkh01/echoflow-releases/releases/latest
               </span>
             </p>
           </Field>

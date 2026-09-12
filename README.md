@@ -8,7 +8,7 @@ your PC.
 ## Download
 
 Get the latest installer from the
-[releases page](https://github.com/Mnourkh01/echoflow/releases/latest). Once installed,
+[releases page](https://github.com/Mnourkh01/echoflow-releases/releases/latest). Once installed,
 EchoFlow updates itself; new versions are downloaded and applied in place.
 
 ## Features

@@ -73,7 +73,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3NDQ4NkIwN0U1OTk5NjAKUldSZ21WbCtzSVpFNTBBd3dubGU0Y09RM3VCRzIrMW5jdzRiZEs2N2hjdjNMdVdhdUNLUVBSQUIK",
       "endpoints": [
-        "https://github.com/Mnourkh01/echoflow/releases/latest/download/latest.json"
+        "https://github.com/Mnourkh01/echoflow-releases/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
