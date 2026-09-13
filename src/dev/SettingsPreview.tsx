@@ -94,7 +94,7 @@ mockIPC(
       case "is_elevated":
         return false;
       case "plugin:app|version":
-        return "1.9.1";
+        return "1.10.0";
       default:
         return null;
     }
