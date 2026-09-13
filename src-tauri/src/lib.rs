@@ -80,7 +80,7 @@ fn build_tray_menu(app: &tauri::AppHandle, mode: &str) -> tauri::Result<Menu<tau
     let polish =
         CheckMenuItem::with_id(app, "mode_polish", "Clean writing", true, mode == "polish", None::<&str>)?;
     let prompt =
-        CheckMenuItem::with_id(app, "mode_prompt", "Prompt mode", true, mode == "prompt", None::<&str>)?;
+        CheckMenuItem::with_id(app, "mode_prompt", "Vibe engineer", true, mode == "prompt", None::<&str>)?;
     let translate = CheckMenuItem::with_id(
         app,
         "mode_translate",

@@ -21,7 +21,7 @@ EchoFlow updates itself; new versions are downloaded and applied in place.
   Arabic instead of forced Modern Standard.
 - **Push to talk or toggle.** Hold a global hotkey anywhere (works unfocused), or press
   once to start and again to stop. In-app, hold Space.
-- **Output modes.** Raw text, Clean writing, Prompt mode, or Translate to English. Switch
+- **Output modes.** Raw text, Clean writing, Vibe engineer, or Translate to English. Switch
   from the header or by right-clicking the tray icon.
 - **Types anywhere.** Result is pasted into the focused field and/or left on the clipboard.
 - **History + prompts.** Every transcript is saved locally, searchable, and exportable to

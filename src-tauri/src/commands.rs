@@ -1516,7 +1516,7 @@ pub fn show_pill_menu(app: AppHandle) -> R<()> {
 
     let raw = check("pill_mode_raw", "Raw text", mode == "raw")?;
     let polish = check("pill_mode_polish", "Clean writing", mode == "polish")?;
-    let prompt = check("pill_mode_prompt", "Prompt mode", mode == "prompt")?;
+    let prompt = check("pill_mode_prompt", "Vibe engineer", mode == "prompt")?;
     let translate = check("pill_mode_translate", "Translate to English", mode == "translate")?;
 
     let sep1 = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
@@ -1996,10 +1996,52 @@ mod tests {
             ("polish-auto", "polish", "auto"),
             ("prompt-en", "prompt", "en"),
             ("prompt-ar", "prompt", "ar"),
+            ("prompt-auto", "prompt", "auto"),
             ("translate", "translate", "en"),
         ] {
             let p = cfg(mode, lang, "English", None, vocab).system_prompt().unwrap();
             std::fs::write(dir.join(format!("{name}.txt")), p).unwrap();
+        }
+    }
+
+    /// Runs every line of ECHOFLOW_LIVE_CASES through the shipped enhance prompt
+    /// on the real CLI the way a take does (wrap, run, unwrap, guard) and prints
+    /// each reply with the guard verdict and the word ratio. Re-check trick
+    /// dictations on Sonnet AND Haiku after any prompt change. Also reads
+    /// ECHOFLOW_LIVE_MODE (default prompt), ECHOFLOW_LIVE_LANG (default en),
+    /// ECHOFLOW_CLI_MODEL (default sonnet) and ECHOFLOW_LIVE_VOCAB. Run by hand:
+    /// `cargo test --lib live_enhance_cases -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_enhance_cases() {
+        let env = |k: &str, default: &str| std::env::var(k).unwrap_or_else(|_| default.into());
+        let cases = std::fs::read_to_string(env("ECHOFLOW_LIVE_CASES", "")).expect("ECHOFLOW_LIVE_CASES");
+        let (mode, lang, model) = (
+            env("ECHOFLOW_LIVE_MODE", "prompt"),
+            env("ECHOFLOW_LIVE_LANG", "en"),
+            env("ECHOFLOW_CLI_MODEL", "sonnet"),
+        );
+        let system = cfg(&mode, &lang, "English", None, &env("ECHOFLOW_LIVE_VOCAB", ""))
+            .system_prompt()
+            .expect("an enhance mode");
+        for said in cases.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let started = Instant::now();
+            let reply = enhance::spawn_cli("claude", &model, &system)
+                .and_then(|s| s.run(&enhance::wrap_transcript(said)))
+                .map(|r| enhance::unwrap_transcript(&r));
+            let ms = started.elapsed().as_millis();
+            match reply {
+                Ok(out) => {
+                    let ratio = out.split_whitespace().count() as f32
+                        / said.split_whitespace().count().max(1) as f32;
+                    eprintln!(
+                        "=== [{model}/{mode}/{lang}] {ms} ms | guard {:?} | arabic {} | words x{ratio:.2}\nIN:  {said}\nOUT: {out}\n",
+                        enhance::check_reply(&mode, said, &out),
+                        crate::text::is_arabic_text(&out),
+                    );
+                }
+                Err(e) => eprintln!("=== [{model}/{mode}/{lang}] {ms} ms | CLI error {e}\nIN:  {said}\n"),
+            }
         }
     }
 

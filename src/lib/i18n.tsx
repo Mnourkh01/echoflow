@@ -39,7 +39,7 @@ const STRINGS = {
   mode_raw: { en: "Raw text", ar: "نص كما هو" },
   mode_translate: { en: "Translate to English", ar: "ترجمة إلى الإنجليزية" },
   mode_polish: { en: "Clean writing", ar: "تحسين الصياغة" },
-  mode_prompt: { en: "Prompt mode", ar: "وضع البرومبت" },
+  mode_prompt: { en: "Vibe engineer", ar: "Vibe engineer" },
   mode_raw_desc: {
     en: "Writes what was said in your selected language, with no AI step, so words in another language are not translated.",
     ar: "يكتب ما قلته باللغة التي اخترتها بدون خطوة الذكاء الاصطناعي، لذلك لا تُترجم الكلمات من لغة أخرى.",
@@ -53,8 +53,8 @@ const STRINGS = {
     ar: "يصحح القواعد والصياغة ليصبح كلامك نصاً واضحاً وطبيعياً، بنفس اللغة التي تحدثت بها. يستخدم الـCLI المحلي.",
   },
   mode_prompt_desc: {
-    en: "Turn your idea into a senior, context-engineered prompt. Uses the local CLI.",
-    ar: "يحول فكرتك إلى برومبت احترافي مهندَس السياق. يستخدم الـCLI المحلي.",
+    en: "Turns rough speech into clean writing in a senior engineer's voice, with the right technical terms. No code, nothing added. Uses the local CLI.",
+    ar: "يحوّل كلامك العفوي إلى نص مرتب بأسلوب مهندس خبير، مع المصطلحات التقنية الصحيحة. بدون كود وبدون إضافات. يستخدم الـCLI المحلي.",
   },
 
   // Record control
@@ -220,8 +220,8 @@ const STRINGS = {
   output: { en: "Output", ar: "المخرجات" },
   cli_command: { en: "AI command", ar: "أمر الذكاء الاصطناعي" },
   cli_command_hint: {
-    en: "The local CLI used for Translate, Clean writing and Prompt mode. Default: claude (your existing subscription, no API key).",
-    ar: "الـCLI المحلي المستخدم للترجمة وتحسين الصياغة ووضع البرومبت. الافتراضي: claude (اشتراكك الحالي، بدون مفتاح API).",
+    en: "The local CLI used for Translate, Clean writing and Vibe engineer. Default: claude (your existing subscription, no API key).",
+    ar: "الـCLI المحلي المستخدم للترجمة وتحسين الصياغة ووضع Vibe engineer. الافتراضي: claude (اشتراكك الحالي، بدون مفتاح API).",
   },
   cli_model: { en: "Model", ar: "النموذج" },
   cli_model_haiku: { en: "Haiku · fast", ar: "Haiku · سريع" },
@@ -400,8 +400,8 @@ const STRINGS = {
 
   // Recognition language + diacritics
   language_hint: {
-    en: "The language you speak. Clean writing and Prompt mode always write English or Arabic when you pick it, translating stray words. Auto follows whatever you speak.",
-    ar: "اللغة التي تتكلم بها. عند اختيار الإنجليزية أو العربية يكتب تحسين الصياغة ووضع البرومبت بها دائماً ويترجمان الكلمات الأخرى. التلقائي يتبع ما تتكلم به.",
+    en: "The language you speak. Clean writing and Vibe engineer always write English or Arabic when you pick it, translating stray words (Vibe engineer keeps technical terms in English). Auto follows whatever you speak.",
+    ar: "اللغة التي تتكلم بها. عند اختيار الإنجليزية أو العربية يكتب تحسين الصياغة ووضع Vibe engineer بها دائماً ويترجمان الكلمات الأخرى (وضع Vibe engineer يبقي المصطلحات التقنية بالإنجليزية). التلقائي يتبع ما تتكلم به.",
   },
   restore_diacritics: { en: "Restore accents (café, résumé)", ar: "استعادة العلامات (café، résumé)" },
   restore_diacritics_desc: {
@@ -410,8 +410,8 @@ const STRINGS = {
   },
   mix_arabic: { en: "I mix Arabic into English", ar: "أخلط العربي مع الإنجليزي" },
   mix_arabic_desc: {
-    en: "With English selected, keep the Arabic words you say so Clean writing and Prompt mode can translate them. Test it with your own voice.",
-    ar: "مع اختيار الإنجليزي، يحتفظ بالكلمات العربية التي تقولها حتى يترجمها تحسين الصياغة ووضع البرومبت. جرّبه بصوتك.",
+    en: "With English selected, keep the Arabic words you say so Clean writing and Vibe engineer can translate them. Test it with your own voice.",
+    ar: "مع اختيار الإنجليزي، يحتفظ بالكلمات العربية التي تقولها حتى يترجمها تحسين الصياغة ووضع Vibe engineer. جرّبه بصوتك.",
   },
   hotkey_plain_warning: {
     en: "Without Ctrl, Alt or Win, this key stops typing in every other app while EchoFlow runs.",
@@ -440,8 +440,8 @@ const STRINGS = {
   },
   ob_modes_t: { en: "Four ways to output", ar: "أربع طرق للمخرجات" },
   ob_modes_b: {
-    en: "Raw text, Clean writing, Prompt mode, or Translate to English. Switch from the header or by right-clicking the tray icon.",
-    ar: "نص كما هو، أو تحسين الصياغة، أو وضع البرومبت، أو الترجمة إلى الإنجليزية. بدّل بينها من الأعلى أو بالنقر بالزر الأيمن على أيقونة الشريط.",
+    en: "Raw text, Clean writing, Vibe engineer, or Translate to English. Switch from the header or by right-clicking the tray icon.",
+    ar: "نص كما هو، أو تحسين الصياغة، أو وضع Vibe engineer، أو الترجمة إلى الإنجليزية. بدّل بينها من الأعلى أو بالنقر بالزر الأيمن على أيقونة الشريط.",
   },
   ob_lang_t: { en: "Languages & accents", ar: "اللغات واللهجات" },
   ob_lang_b: {

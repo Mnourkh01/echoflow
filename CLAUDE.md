@@ -99,8 +99,8 @@ and already installed on this machine.
   recording must call `take_warm_cli()` so the process never lingers.
   Recording start also reloads the Whisper model if the idle monitor freed it.
 - Language lock: with the recognition language set to `en` or `ar`, Clean writing
-  and Prompt mode write only that language and translate stray words
-  (`enhance::Lock`); Auto keeps the spoken language; other forced codes act like
+  and Vibe engineer write only that language and translate stray words
+  (`enhance::Lock`; Vibe engineer keeps technical terms in English); Auto keeps the spoken language; other forced codes act like
   Auto. Raw mode has no AI step, so it cannot translate stray words.
 - Translate listens for `translate_from` (`commands::effective_translate_from`:
   unset means Arabic when the target is English, else auto), never the
@@ -111,7 +111,12 @@ and already installed on this machine.
   `enhance::check_reply` before it is typed: a meta reply ("I can only rewrite
   transcripts...") or an answer-shaped one keeps the raw transcript and sets
   `enhance_rejected`. Re-check trick dictations on Sonnet AND Haiku after any
-  prompt change (`cargo test --lib dump_prompts -- --ignored` exports them).
+  prompt change: `cargo test --lib live_enhance_cases -- --ignored --nocapture`
+  runs a cases file through the real CLI (`dump_prompts` exports the prompts).
+- Vibe engineer mode (formerly Prompt mode) keeps the internal id `prompt`
+  (settings value, menu ids). It rewrites rough dev talk in a senior engineer's
+  voice with the precise term for what was said, never code, a plan or new
+  scope, and it is not exempt from the answer-shaped length guard.
 - Quiet speech: `audio::speech_present` (30 ms frames) is the silence gate, the VAD
   floor is 4e-4 on the 95th-percentile frame, `SPEECH_LEVEL` is 0.003. Re-run
   `whisper::tests::replay_quiet_speech` after touching any of them.
