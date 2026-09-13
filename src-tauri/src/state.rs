@@ -246,6 +246,18 @@ impl AppState {
         vocab: &str,
         mixed: bool,
     ) -> Result<Transcript> {
+        let result = self.with_engine(model, |e| {
+            e.transcribe(audio_16k, language_mode, translate, dialect, vocab, mixed, &self.cancel_transcribe)
+        });
+        // Leave a memory trail in the log so a slow leak over hours of heavy use
+        // is visible after the fact (the "becomes unresponsive after ~2h" report).
+        log::info!("transcribe finished; rss = {:.0} MB", crate::mem::rss_mb());
+        result
+    }
+
+    /// Run `f` on the engine for `model`, loading it first when none is loaded
+    /// or a different model is.
+    fn with_engine<T>(&self, model: &str, f: impl FnOnce(&WhisperEngine) -> Result<T>) -> Result<T> {
         self.touch();
         let mut guard = self.engine.lock();
         let need_load = match guard.as_ref() {
@@ -259,14 +271,8 @@ impl AppState {
                 .ok_or_else(|| anyhow!("model '{model}' is not downloaded"))?;
             *guard = Some(WhisperEngine::load(&path, model)?);
         }
-        let result = guard
-            .as_ref()
-            .expect("engine loaded above")
-            .transcribe(audio_16k, language_mode, translate, dialect, vocab, mixed, &self.cancel_transcribe);
+        let result = f(guard.as_ref().expect("engine loaded above"));
         self.touch();
-        // Leave a memory trail in the log so a slow leak over hours of heavy use
-        // is visible after the fact (the "becomes unresponsive after ~2h" report).
-        log::info!("transcribe finished; rss = {:.0} MB", crate::mem::rss_mb());
         result
     }
 }
