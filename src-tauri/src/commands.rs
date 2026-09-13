@@ -591,6 +591,7 @@ fn run_enhance(
             .map(|t| enhance::unwrap_transcript(&t))
             .map_err(|e| EnhanceErr::Failed(e.to_string()))?
     };
+    let reply = crate::text::replace_dashes(&reply);
     match enhance::check_reply(mode, text, &reply) {
         Ok(()) => Ok(reply),
         Err(why) => Err(EnhanceErr::Rejected(format!(
@@ -2028,7 +2029,7 @@ mod tests {
             let started = Instant::now();
             let reply = enhance::spawn_cli("claude", &model, &system)
                 .and_then(|s| s.run(&enhance::wrap_transcript(said)))
-                .map(|r| enhance::unwrap_transcript(&r));
+                .map(|r| crate::text::replace_dashes(&enhance::unwrap_transcript(&r)));
             let ms = started.elapsed().as_millis();
             match reply {
                 Ok(out) => {

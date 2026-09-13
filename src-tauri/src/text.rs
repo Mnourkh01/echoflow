@@ -392,6 +392,73 @@ pub fn is_arabic_text(text: &str) -> bool {
     arabic >= 12 && arabic_share(text) > 0.15
 }
 
+/// Em and en dashes read as machine-written, and the prompts ban them, yet
+/// Haiku still slips one in now and then. A dash between words becomes a comma
+/// (an Arabic comma after Arabic), an en dash between numbers a hyphen, and a
+/// dash with nothing to join is dropped.
+pub fn replace_dashes(text: &str) -> String {
+    const DASHES: [char; 2] = ['\u{2014}', '\u{2013}'];
+    if !text.contains(DASHES) {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        if !DASHES.contains(&c) {
+            out.push(c);
+            continue;
+        }
+        out.truncate(out.trim_end_matches([' ', '\t']).len());
+        while matches!(chars.get(i).copied(), Some(' ' | '\t')) {
+            i += 1;
+        }
+        let (Some(before), Some(after)) = (out.chars().last(), chars.get(i).copied()) else {
+            continue;
+        };
+        if before == '\n' || matches!(after, '\n' | '.' | ',' | ';' | ':' | '!' | '?' | ')' | '،' | '؟') {
+            continue;
+        }
+        if c == '\u{2013}' && before.is_ascii_digit() && after.is_ascii_digit() {
+            out.push('-');
+        } else if before.is_alphanumeric() || matches!(before, ')' | '"' | '\'') {
+            out.push(if matches!(before, '\u{0600}'..='\u{06FF}') { '،' } else { ',' });
+            out.push(' ');
+        } else {
+            out.push(' ');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod dash_tests {
+    use super::replace_dashes;
+
+    #[test]
+    fn dashes_become_the_punctuation_a_person_types() {
+        let cases = [
+            (
+                "how a senior engineer would talk about code\u{2014}using technical language",
+                "how a senior engineer would talk about code, using technical language",
+            ),
+            ("the app \u{2014} the slow one \u{2014} crashes", "the app, the slow one, crashes"),
+            ("pages 5\u{2013}10 and 5 \u{2013} 10", "pages 5-10 and 5-10"),
+            ("What? \u{2014} yes", "What? yes"),
+            ("done \u{2014}.", "done."),
+            ("first line\n\u{2014} second", "first line\nsecond"),
+            ("\u{2014} at the start", "at the start"),
+            ("خلصنا \u{2014} بكرا منكمل", "خلصنا، بكرا منكمل"),
+            ("plain hyphens - stay", "plain hyphens - stay"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(replace_dashes(input), want, "{input}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod arabic_text_tests {
     use super::is_arabic_text;
