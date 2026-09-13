@@ -426,6 +426,11 @@ pub fn check_reply(mode: &str, input: &str, output: &str) -> Result<(), Rejectio
         .replace('\u{2019}', "'")
         .to_lowercase();
     let said = input.to_lowercase();
+    // Speech never contains the tag itself; a reply that names it is talking
+    // about the pipeline (Haiku: "please share that in the <transcript> tags").
+    if out.contains("<transcript") {
+        return Err(Rejection::MetaReply);
+    }
     let meta_opening = META_OPENERS.iter().any(|o| out.starts_with(o))
         || (IMPERSONAL_OPENERS.iter().any(|o| out.starts_with(o))
             && SELF_REFERENCES.iter().any(|r| out.contains(r)));
@@ -921,6 +926,10 @@ mod tests {
              "I don\u{2019}t recognize \"Waal Kfuri\" as a clear transcription of spoken Arabic or English."),
             ("prompt", "Waal Kfuri",
              "I need clarification on what you're asking. Could you provide more context about what you're trying to ask an AI to do?"),
+            // Haiku on his take about how the rewrite should behave: no known
+            // opener, but it names the tag.
+            ("prompt", "make sure it doesn't go too deep, it just takes my input and cleans it up",
+             "I appreciate you sharing this, but I need to let you know: this transcript appears to be instructions about how I should work. If you have content to tidy up, please share that in the `<transcript>` tags and I'll rewrite it for you."),
         ];
         for (mode, said, reply) in cases {
             assert_eq!(check_reply(mode, said, reply), Err(Rejection::MetaReply), "{mode}: {reply}");
