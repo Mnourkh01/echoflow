@@ -45,8 +45,8 @@ const STRINGS = {
     ar: "يكتب ما قلته باللغة التي اخترتها بدون خطوة الذكاء الاصطناعي، لذلك لا تُترجم الكلمات من لغة أخرى.",
   },
   mode_translate_desc: {
-    en: "Speak Arabic in any dialect (English words mixed in are fine) and get clean, natural English. Uses the local CLI.",
-    ar: "تكلم بالعربي بأي لهجة (لا مشكلة في الكلمات الإنجليزية) واحصل على إنجليزية واضحة وطبيعية. يستخدم الـCLI المحلي.",
+    en: "Speak Arabic or English (any dialect, mixed words are fine) and get clean, natural English. Uses the local CLI.",
+    ar: "تكلم بالعربي أو الإنجليزي (بأي لهجة، والكلمات المخلوطة لا مشكلة فيها) واحصل على إنجليزية واضحة وطبيعية. يستخدم الـCLI المحلي.",
   },
   mode_polish_desc: {
     en: "Fixes grammar and wording so your speech reads like clean, natural writing, in the language you spoke. Uses the local CLI.",
@@ -62,9 +62,9 @@ const STRINGS = {
   no_speech_notice: { en: "No speech detected, discarded", ar: "لم يُكتشف كلام، تم التجاهل" },
   canceled_notice: { en: "Recording discarded", ar: "تم تجاهل التسجيل" },
   cancel_recording: { en: "Cancel", ar: "إلغاء" },
-  translate_warning_notice: {
-    en: "Still on Translate. What you said is already in the target language, so it was kept as is.",
-    ar: "ما زلت في وضع الترجمة. ما قلته باللغة الهدف أصلاً، لذا أُبقي كما هو.",
+  wrong_language_notice: {
+    en: "You didn't speak the language Translate listens for, so nothing was typed or sent to the AI. Set Translate from to Auto detect to speak any language.",
+    ar: "لم تتكلم باللغة التي تستمع لها الترجمة، فلم يُكتب شيء ولم يُرسل شيء للذكاء الاصطناعي. اختر «كشف تلقائي» في «الترجمة من» لتتكلم بأي لغة.",
   },
   enhance_offline_notice: {
     en: "No connection, AI step skipped. Showing your raw words.",
@@ -127,8 +127,8 @@ const STRINGS = {
   translate_to: { en: "Translate into", ar: "الترجمة إلى" },
   translate_from: { en: "Translate from", ar: "الترجمة من" },
   translate_from_hint: {
-    en: "EchoFlow listens only for this language, so a few words from another language never switch it.",
-    ar: "يستمع EchoFlow لهذه اللغة فقط، فبعض الكلمات من لغة أخرى لا تغيّرها.",
+    en: "Auto detect works out which language you spoke. Pick one language and EchoFlow listens only for it, and types nothing when you speak another.",
+    ar: "«كشف تلقائي» يعرف اللغة التي تكلمت بها. إذا اخترت لغة واحدة، يستمع EchoFlow لها فقط ولا يكتب شيئاً إذا تكلمت بلغة أخرى.",
   },
   enhance_rejected_notice: {
     en: "The AI reply didn't look like your words, so your original text was kept.",
@@ -418,7 +418,7 @@ const STRINGS = {
     ar: "بدون Ctrl أو Alt أو Win، هذا الحرف لن يُكتب في أي برنامج آخر ما دام EchoFlow يعمل.",
   },
   pill_on_clipboard: { en: "Press Ctrl+V", ar: "اضغط Ctrl+V" },
-  pill_on_translate: { en: "On Translate", ar: "وضع الترجمة" },
+  pill_wrong_language: { en: "Wrong language", ar: "لغة مختلفة" },
   pill_typed_raw: { en: "Typed as spoken", ar: "كُتب كما قلته" },
   pill_no_speech: { en: "No speech heard", ar: "لم أسمع كلاماً" },
   pill_failed: { en: "Didn't work", ar: "لم ينجح" },

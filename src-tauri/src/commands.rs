@@ -44,6 +44,10 @@ const NO_SPEECH_GRACE: Duration = Duration::from_secs(15);
 
 type R<T> = Result<T, String>;
 
+/// `end_recording`'s error for a Translate take in a language it is not set to
+/// hear. Not a failure: the UI shows it as a notice, nothing is saved or typed.
+pub const WRONG_LANGUAGE: &str = "wrong-language";
+
 /// Windows: spawn child processes (curl) without popping a console window.
 fn no_window(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -133,19 +137,23 @@ fn needs_plain_redecode(primed: bool, enhance_rejected: bool, enhance_failed: bo
 /// ended, so language problems can be judged on real use. No dictation text.
 fn take_diagnostics(
     decode_lang: &str,
+    heard: &str,
     primed: bool,
     ai_outcome: &str,
     tail_coverage: Option<f32>,
     avg_logprob: Option<f32>,
+    whisper_loop: bool,
 ) -> String {
     // Through f64, or serde_json prints the f32 widening noise (0.8569999933).
     let round = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
     serde_json::json!({
         "decode_lang": decode_lang,
+        "heard": heard,
         "mixed_prime": primed,
         "ai": ai_outcome,
         "tail_coverage": tail_coverage.map(round),
         "avg_logprob": avg_logprob.map(round),
+        "whisper_loop": whisper_loop,
     })
     .to_string()
 }
@@ -196,28 +204,33 @@ fn lang_name(code: &str) -> Option<&'static str> {
     })
 }
 
-/// The language Translate listens for. An explicit choice wins; otherwise
-/// Arabic when translating into English (what EchoFlow's Translate is for), and
-/// auto-detect for any other target so setups that translate into Arabic keep
-/// working.
+/// The language Translate listens for: the user's explicit choice, else
+/// auto-detect. Auto is the default since 2026-09-13: he speaks Arabic or
+/// English on Translate and wants English out either way, and the old Arabic
+/// default forced English speech into garbled Arabic that looped.
 fn effective_translate_from(s: &Settings) -> String {
     match s.translate_from.as_deref().map(str::trim) {
         Some(code) if !code.is_empty() => code.to_string(),
-        _ if strict_lang_code(&s.translate_target) == Some("en") => "ar".to_string(),
         _ => "auto".to_string(),
     }
 }
 
 /// Whisper's input language. Translate listens for its own source language
-/// (Arabic by default, even when the recognition language is English), so
-/// Arabic speech is no longer decoded as English and then skipped as "already
-/// English". Every other mode uses the recognition language.
+/// (auto-detect unless one is picked), never the recognition language, so
+/// Arabic speech is not decoded as English under an English lock. Every other
+/// mode uses the recognition language.
 fn decode_language(output_mode: &str, language_mode: &str, translate_from: &str) -> String {
     if output_mode == "translate" {
         translate_from.to_string()
     } else {
         language_mode.to_string()
     }
+}
+
+/// Whether a Translate take is refused: a picked source that language ID can
+/// judge (one of `AUTO_LANGS`, so never "auto") heard another language.
+fn wrong_translate_language(listening_for: &str, heard: &str) -> bool {
+    crate::whisper::AUTO_LANGS.contains(&listening_for) && heard != listening_for
 }
 
 /// The window that owns focus right now, unless it belongs to our own process
@@ -773,6 +786,22 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // can translate the Arabic it keeps. Raw mode would type Arabic script.
     let primed = mix_arabic && decode_lang == "en" && matches!(output_mode.as_str(), "polish" | "prompt");
 
+    // A Translate source he picked is a promise: speech in another language is
+    // refused before any decode or AI call, so no AI credit is spent. Forced
+    // Arabic on his English speech came out as garbled Arabic that looped, and
+    // the AI "translated" the loop. Language ID separates his takes cleanly:
+    // 0.99 English on that take, every Arabic sample of his 0.83 Arabic or more.
+    if output_mode == "translate" && decode_lang != "auto" {
+        match state.detect_language(&audio_16k, &model) {
+            Ok((heard, p)) if wrong_translate_language(&decode_lang, &heard) => {
+                log::info!("translate: heard '{heard}' ({p:.2}) while listening for '{decode_lang}'; take refused");
+                return Err(WRONG_LANGUAGE.to_string());
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("translate language check failed, decoding as '{decode_lang}': {e}"),
+        }
+    }
+
     // Always transcribe in the spoken language first. The CLI step does the
     // language work (it handles Arabic dialects far better than Whisper's weak
     // built-in translate task), so native text is the right input for it.
@@ -787,6 +816,12 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             }
             Err(e) => return Err(e.to_string()),
         };
+    // A decode stuck on one phrase keeps a single copy before the silence
+    // check, the AI step, typing and history see it.
+    let whisper_loop = transcript.collapse_loops();
+    if whisper_loop {
+        log::warn!("collapsed a Whisper repetition loop in the '{}' decode", transcript.language);
+    }
     // Language the user actually spoke (detected in auto mode, or the forced code).
     let source_lang = transcript.language.clone();
 
@@ -811,12 +846,6 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         }
     }
 
-    // In Translate mode, if the spoken language already matches the target (e.g.
-    // English speech with target = English) there is nothing to translate, and
-    // running the model anyway tends to drift or paraphrase out of scope. Detect
-    // that, skip the CLI, keep the user's own words, and raise a warning the UI +
-    // pill surface so they know they're still on Translate.
-    let mut translate_warning = false;
     // Set when an AI enhance is attempted but fails (offline) and we fall back to
     // the raw transcript, so the UI can tell the user their text wasn't enhanced.
     let mut enhance_failed = false;
@@ -830,15 +859,9 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     let mut tail_cov: Option<f32> = None;
 
     // translate / polish / prompt run the transcript through the AI engine.
-    let cli_system: Option<String> = if output_mode == "translate"
-        && Some(source_lang.as_str()) == strict_lang_code(&translate_target)
-    {
-        translate_warning = true;
-        ai_outcome = "skipped";
-        None
-    } else {
-        cfg.system_prompt()
-    };
+    // Translate also runs on speech already in the target language: its prompt
+    // cleans that up, so English said on Translate still comes out clean English.
+    let cli_system = cfg.system_prompt();
     // A reply for an English target that is still mostly Arabic is never typed.
     let expects_english = match output_mode.as_str() {
         "translate" => strict_lang_code(&translate_target) == Some("en"),
@@ -914,6 +937,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
                         if let Ok(mut t2) =
                             state.transcribe(&audio_16k, &model, &decode_lang, true, &dialect, &vocab, false)
                         {
+                            t2.collapse_loops();
                             if crate::text::arabic_share(&t2.full_text) < 0.1 {
                                 t2.language = "en".to_string();
                                 if !vocab.trim().is_empty() {
@@ -938,6 +962,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     if needs_plain_redecode(primed, enhance_rejected, enhance_failed, &transcript.full_text) {
         match state.transcribe(&audio_16k, &model, &decode_lang, false, &dialect, &vocab, false) {
             Ok(mut plain) => {
+                plain.collapse_loops();
                 if !vocab.trim().is_empty() {
                     plain.full_text = crate::text::apply_custom_vocab(&plain.full_text, &vocab);
                     for seg in &mut plain.segments {
@@ -993,7 +1018,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             &transcript.full_text,
             &transcript.segments,
             Some(&raw_text),
-            Some(&take_diagnostics(&decode_lang, primed, ai_outcome, tail_cov, transcript.avg_logprob)),
+            Some(&take_diagnostics(&decode_lang, &source_lang, primed, ai_outcome, tail_cov, transcript.avg_logprob, whisper_loop)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -1033,7 +1058,6 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         full_text: transcript.full_text,
         pinned: false,
         segments: transcript.segments,
-        translate_warning,
         enhance_failed,
         enhance_rejected,
         paste_blocked,
@@ -1763,14 +1787,16 @@ mod tests {
 
     #[test]
     fn take_diagnostics_is_small_json_without_text() {
-        let d = take_diagnostics("en", true, "ok", Some(0.8571), Some(-0.31234));
+        let d = take_diagnostics("auto", "en", true, "ok", Some(0.8571), Some(-0.31234), true);
         let v: serde_json::Value = serde_json::from_str(&d).unwrap();
-        assert_eq!(v["decode_lang"], "en");
+        assert_eq!(v["decode_lang"], "auto");
+        assert_eq!(v["heard"], "en");
         assert_eq!(v["mixed_prime"], true);
         assert_eq!(v["ai"], "ok");
         assert_eq!(v["tail_coverage"], 0.857);
         assert_eq!(v["avg_logprob"], -0.312);
-        let none = take_diagnostics("ar", false, "none", None, None);
+        assert_eq!(v["whisper_loop"], true);
+        let none = take_diagnostics("ar", "ar", false, "none", None, None, false);
         assert!(none.contains(r#""tail_coverage":null"#), "{none}");
     }
 
@@ -1860,7 +1886,7 @@ mod tests {
     }
 
     #[test]
-    fn translate_listens_for_arabic_even_when_english_is_selected() {
+    fn translate_listens_for_any_language_by_default() {
         // The user's setup: recognition English, Translate into English.
         let s = Settings {
             language_mode: "en".into(),
@@ -1868,13 +1894,69 @@ mod tests {
             ..Settings::default()
         };
         let from = effective_translate_from(&s);
-        assert_eq!(from, "ar");
-        assert_eq!(decode_language("translate", "en", &from), "ar");
+        assert_eq!(from, "auto");
+        assert_eq!(decode_language("translate", "en", &from), "auto");
         assert_eq!(decode_language("polish", "en", &from), "en");
         assert!(cfg("translate", "en", "English", None, "")
             .system_prompt()
             .unwrap()
+            .contains("The source may be any language"));
+        // A picked source is still what Translate listens for.
+        let arabic = Settings { translate_from: Some("ar".into()), ..s };
+        assert_eq!(decode_language("translate", "en", &effective_translate_from(&arabic)), "ar");
+        assert!(cfg("translate", "en", "English", Some("ar"), "")
+            .system_prompt()
+            .unwrap()
             .contains("from Arabic into English"));
+    }
+
+    /// Replays real takes through the Translate language decision that
+    /// `end_recording` makes: language ID, the Arabic-source refusal, the auto
+    /// decode and the loop cut. With ECHOFLOW_LIVE_CLI=1 the auto transcript also
+    /// goes through the real Translate prompt on the CLI (one AI call per clip).
+    /// Takes 16 kHz mono WAVs (EchoFlow's own history files). Run by hand:
+    /// `cargo test --release --features gpu-vulkan --lib replay_translate_decision -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn replay_translate_decision() {
+        let model = std::path::PathBuf::from(std::env::var("ECHOFLOW_MODEL").expect("ECHOFLOW_MODEL"));
+        let files = std::env::var("ECHOFLOW_REPLAY_FILES").expect("ECHOFLOW_REPLAY_FILES");
+        let live = std::env::var("ECHOFLOW_LIVE_CLI").is_ok_and(|v| v == "1");
+        let engine = crate::whisper::WhisperEngine::load(&model, "replay").expect("load model");
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let system = cfg("translate", "en", "English", None, "").system_prompt().unwrap();
+        for f in files.split(';').filter(|s| !s.trim().is_empty()) {
+            let audio: Vec<f32> = hound::WavReader::open(f)
+                .expect("open wav")
+                .samples::<i16>()
+                .map(|s| s.unwrap() as f32 / 32768.0)
+                .collect();
+            let (heard, p) = engine.detect(&audio).expect("detect");
+            let refused = wrong_translate_language("ar", &heard);
+            let mut t = engine.transcribe(&audio, "auto", false, "auto", "", false, &cancel).expect("decode");
+            let looped = t.collapse_loops();
+            eprintln!(
+                "{} heard {heard} ({p:.2}) | Arabic source: {} | auto decode '{}' loop {looped} | {}",
+                Path::new(f).file_name().unwrap().to_string_lossy(),
+                if refused { "REFUSED" } else { "decoded" },
+                t.language,
+                t.full_text
+            );
+            if live {
+                let reply = enhance::spawn_cli("claude", "sonnet", &system)
+                    .and_then(|s| s.run(&enhance::wrap_transcript(&t.full_text)))
+                    .map(|r| enhance::unwrap_transcript(&r));
+                eprintln!("  AI -> {reply:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_picked_translate_source_refuses_other_languages() {
+        assert!(wrong_translate_language("ar", "en"), "his English take on Arabic");
+        assert!(!wrong_translate_language("ar", "ar"));
+        assert!(!wrong_translate_language("auto", "en"), "auto hears any language");
+        assert!(!wrong_translate_language("tr", "en"), "a source language ID cannot judge");
     }
 
     #[test]
@@ -1884,7 +1966,7 @@ mod tests {
         let chosen = Settings { translate_from: Some("fr".into()), ..Settings::default() };
         assert_eq!(effective_translate_from(&chosen), "fr");
         let blank = Settings { translate_from: Some("  ".into()), ..Settings::default() };
-        assert_eq!(effective_translate_from(&blank), "ar");
+        assert_eq!(effective_translate_from(&blank), "auto");
         assert_eq!(strict_lang_code("Klingon"), None);
         assert_eq!(lang_code_for("Klingon"), "en");
     }
@@ -1896,7 +1978,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.translate_from, None);
-        assert_eq!(effective_translate_from(&s), "ar");
+        assert_eq!(effective_translate_from(&s), "auto");
     }
 
     /// Writes the exact shipped prompts to ECHOFLOW_PROMPT_DIR so live checks

@@ -13,7 +13,7 @@ type Mode = "idle" | "recording" | "processing";
 // window is hidden in pill mode, so this is the only place he can see it.
 type PillNotice = { kind: "translate" | "clipboard" | "raw" | "silent" | "failed"; label: StringKey; detail: string };
 
-const NOTICE_MS = { translate: 2800, clipboard: 4500, raw: 3500, silent: 2500, failed: 4000 } as const;
+const NOTICE_MS = { translate: 4000, clipboard: 4500, raw: 3500, silent: 2500, failed: 4000 } as const;
 
 const NOTICE_LOOK = {
   translate: { Icon: Languages, border: "border-amber-400/70", text: "text-amber-300" },
@@ -65,8 +65,6 @@ export default function Overlay() {
       const r = e.payload;
       if (r?.paste_blocked) {
         showNotice({ kind: "clipboard", label: "pill_on_clipboard", detail: t("paste_blocked_notice") });
-      } else if (r?.translate_warning) {
-        showNotice({ kind: "translate", label: "pill_on_translate", detail: t("translate_warning_notice") });
       } else if (r?.enhance_rejected) {
         showNotice({ kind: "raw", label: "pill_typed_raw", detail: t("enhance_rejected_notice") });
       } else if (r?.enhance_failed) {
@@ -81,6 +79,8 @@ export default function Overlay() {
     const offCanceled = listen<string>("rec-canceled", (e) => {
       if (e.payload === "no-speech") {
         showNotice({ kind: "silent", label: "pill_no_speech", detail: t("no_speech_notice") });
+      } else if (e.payload === "wrong-language") {
+        showNotice({ kind: "translate", label: "pill_wrong_language", detail: t("wrong_language_notice") });
       } else {
         finish();
       }

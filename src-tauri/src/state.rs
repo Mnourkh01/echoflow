@@ -255,6 +255,11 @@ impl AppState {
         result
     }
 
+    /// Language ID on a take, no decode (see `WhisperEngine::detect`).
+    pub fn detect_language(&self, audio_16k: &[f32], model: &str) -> Result<(String, f32)> {
+        self.with_engine(model, |e| e.detect(audio_16k))
+    }
+
     /// Run `f` on the engine for `model`, loading it first when none is loaded
     /// or a different model is.
     fn with_engine<T>(&self, model: &str, f: impl FnOnce(&WhisperEngine) -> Result<T>) -> Result<T> {

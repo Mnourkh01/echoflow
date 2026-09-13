@@ -19,9 +19,6 @@ export interface RecordingResult {
   full_text: string;
   pinned: boolean;
   segments: Segment[];
-  // True when a fresh Translate-mode dictation was spoken in the target language
-  // already (nothing to translate). The native words are kept and the UI warns.
-  translate_warning?: boolean;
   // True when an AI enhance step (clean/translate/prompt) failed (usually offline)
   // and the app fell back to the raw transcript.
   enhance_failed?: boolean;
@@ -73,7 +70,7 @@ export interface Settings {
   noise_suppression: boolean;
   output_mode: OutputMode;
   translate_target: string;
-  translate_from: string | null; // Translate source code; null = Arabic when the target is English, else auto
+  translate_from: string | null; // Translate source code; null = auto-detect
   restore_diacritics: boolean;
   voice_commands: boolean; // raw mode: spoken "new line"/"period"/... -> real punctuation
   mix_arabic: boolean; // English lock + AI step: keep spoken Arabic words for the AI to translate

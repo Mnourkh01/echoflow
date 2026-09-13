@@ -14,7 +14,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 /// comes back as Farsi/Urdu (and accented English as Dutch/Afrikaans) when the
 /// whole list competes. Restricting the argmax to the supported set fixes those
 /// misdetections without touching forced-language mode.
-const AUTO_LANGS: &[&str] = &["en", "ar", "fr", "de", "es", "it", "pt", "nl"];
+pub(crate) const AUTO_LANGS: &[&str] = &["en", "ar", "fr", "de", "es", "it", "pt", "nl"];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Segment {
@@ -32,6 +32,42 @@ pub struct Transcript {
     /// Mean log-probability of the text tokens. whisper.cpp does not say when
     /// its temperature fallback fired; a low value is the visible trace of it.
     pub avg_logprob: Option<f32>,
+}
+
+impl Transcript {
+    /// Cut Whisper's runaway repeats (`text::collapse_loops`) to one copy in the
+    /// text and in the segments, where a loop is often one segment decoded over
+    /// and over. True when anything was cut.
+    pub fn collapse_loops(&mut self) -> bool {
+        let Some(text) = crate::text::collapse_loops(&self.full_text) else {
+            return false;
+        };
+        self.full_text = text;
+        let mut kept: Vec<Segment> = Vec::with_capacity(self.segments.len());
+        let mut i = 0;
+        while i < self.segments.len() {
+            let key = crate::text::normalize_words(&self.segments[i].text);
+            let mut j = i + 1;
+            while j < self.segments.len() && crate::text::normalize_words(&self.segments[j].text) == key {
+                j += 1;
+            }
+            if j - i >= 3 {
+                let mut seg = self.segments[i].clone();
+                seg.end_ms = self.segments[j - 1].end_ms;
+                kept.push(seg);
+            } else {
+                kept.extend_from_slice(&self.segments[i..j]);
+            }
+            i = j;
+        }
+        for seg in &mut kept {
+            if let Some(t) = crate::text::collapse_loops(&seg.text) {
+                seg.text = t;
+            }
+        }
+        self.segments = kept;
+        true
+    }
 }
 
 pub struct WhisperEngine {
@@ -86,20 +122,7 @@ impl WhisperEngine {
         mixed: bool,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Transcript> {
-        // Thread count: measured on the 12700H (6P+8E hybrid), ggml gets SLOWER
-        // past ~8 threads (E-cores + spin sync stall the P-cores: 8 threads
-        // 15s, 16 threads 34s on the same clip). min(8) is the sweet spot for
-        // hybrid CPUs; ECHOFLOW_THREADS overrides for benching / odd machines.
-        let threads = std::env::var("ECHOFLOW_THREADS")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4)
-                    .min(8)
-            })
-            .clamp(1, 32) as i32;
+        let threads = whisper_threads();
 
         // Settle on the language up front. A forced mode wins; otherwise run a
         // cheap detect pass on the mel so we know the language (and its
@@ -386,6 +409,35 @@ fn split_at_silence(samples: &[f32], sr: usize) -> Vec<(usize, usize)> {
     bounds
 }
 
+/// Thread count: measured on the 12700H (6P+8E hybrid), ggml gets SLOWER past
+/// ~8 threads (E-cores + spin sync stall the P-cores: 8 threads 15s, 16 threads
+/// 34s on the same clip). min(8) is the sweet spot for hybrid CPUs;
+/// ECHOFLOW_THREADS overrides for benching / odd machines.
+fn whisper_threads() -> i32 {
+    std::env::var("ECHOFLOW_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(8)
+        })
+        .clamp(1, 32) as i32
+}
+
+impl WhisperEngine {
+    /// Language ID alone, no decode: the likeliest of `AUTO_LANGS` and its
+    /// probability, from the first 30 s (what auto mode would pick).
+    pub fn detect(&self, audio_16k_mono: &[f32]) -> Result<(String, f32)> {
+        let mut state = self
+            .ctx
+            .create_state()
+            .map_err(|e| anyhow!("failed to create whisper state: {e}"))?;
+        detect_language(&mut state, audio_16k_mono, whisper_threads())
+    }
+}
+
 /// Detect the spoken language from the audio's mel spectrogram, returning the
 /// ISO code and its probability (0..1). Cheap relative to a full decode.
 /// The argmax runs over `AUTO_LANGS` only (see the const above); the raw global
@@ -590,10 +642,11 @@ mod tests {
             let audio = read_wav_16k_mono(&f);
             let t = engine.transcribe(&audio, &lang, false, "auto", &vocab, mixed, &cancel).unwrap();
             eprintln!(
-                "{} [{lang}{}] logprob {:?} | {}",
+                "{} [{lang}{}] logprob {:?} loop {} | {}",
                 f.file_name().unwrap().to_string_lossy(),
                 if mixed { " +mixed" } else { "" },
                 t.avg_logprob,
+                crate::text::collapse_loops(&t.full_text).is_some(),
                 t.full_text
             );
         }
@@ -694,6 +747,32 @@ mod tests {
             body.split(", ").all(|t| t.starts_with("TermNumber") && t.ends_with("Xyz")),
             "every kept term is intact: {body}"
         );
+    }
+
+    #[test]
+    fn a_looped_decode_keeps_one_copy_in_text_and_segments() {
+        let seg = |s: i64, text: &str| Segment { start_ms: s, end_ms: s + 1000, text: text.into() };
+        let mut t = Transcript {
+            full_text: "We can prepare it. I think it should be prepared. I think it should be prepared. \
+I think it should be prepared. I think it should be prepared."
+                .into(),
+            language: "en".into(),
+            language_confidence: 1.0,
+            segments: vec![
+                seg(0, "We can prepare it."),
+                seg(1000, "I think it should be prepared."),
+                seg(2000, "I think it should be prepared."),
+                seg(3000, "I think it should be prepared."),
+                seg(4000, "I think it should be prepared."),
+            ],
+            avg_logprob: None,
+        };
+        assert!(t.collapse_loops());
+        assert_eq!(t.full_text, "We can prepare it. I think it should be prepared.");
+        assert_eq!(t.segments.len(), 2);
+        assert_eq!((t.segments[1].start_ms, t.segments[1].end_ms), (1000, 5000));
+        let mut clean = t.clone();
+        assert!(!clean.collapse_loops(), "nothing left to cut");
     }
 
     #[test]

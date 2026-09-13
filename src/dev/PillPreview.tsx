@@ -17,7 +17,7 @@ const CASES: Record<string, () => Promise<void>> = {
   recording: () => emit("rec-started"),
   done: () => finishTake({}),
   clipboard: () => finishTake({ paste_blocked: true }),
-  translate: () => finishTake({ translate_warning: true }),
+  wrong_language: () => emit("rec-canceled", "wrong-language"),
   rejected: () => finishTake({ enhance_rejected: true }),
   ai_failed: () => finishTake({ enhance_failed: true }),
   no_speech: () => emit("rec-canceled", "no-speech"),

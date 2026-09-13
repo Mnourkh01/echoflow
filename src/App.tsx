@@ -138,9 +138,7 @@ export default function App() {
         setActiveId(res.id);
         await refreshHistory();
         flashMic("happy");
-        if (res.translate_warning) {
-          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
-        } else if (res.enhance_rejected) {
+        if (res.enhance_rejected) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
         } else if (res.enhance_failed) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
@@ -156,7 +154,12 @@ export default function App() {
       }
     } catch (e) {
       flashMic("sad");
-      setError(String(e));
+      // A Translate take in a language it is not set to hear: refused, not broken.
+      if (String(e) === "wrong-language") {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "wrong_language_notice"));
+      } else {
+        setError(String(e));
+      }
     } finally {
       stopPendingRef.current = false;
       setRecState("idle");
@@ -260,8 +263,6 @@ export default function App() {
       flashMic("happy");
       if (e.payload.paste_blocked) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "paste_blocked_notice"));
-      } else if (e.payload.translate_warning) {
-        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "translate_warning_notice"));
       } else if (e.payload.enhance_rejected) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
       } else if (e.payload.enhance_failed) {
@@ -286,7 +287,8 @@ export default function App() {
         }
       } else {
         flashMic("sad");
-        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "no_speech_notice"));
+        const key = e.payload === "wrong-language" ? "wrong_language_notice" : "no_speech_notice";
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", key));
       }
     });
     const offCancelRequested = listen("rec-cancel-requested", () => {

@@ -56,10 +56,8 @@ const TARGET_CODE: Record<string, string> = {
   Korean: "ko",
 };
 
-// Mirrors Rust `effective_translate_from`: unset means Arabic when translating
-// into English, otherwise auto-detect.
-const translateFrom = (s: Settings) =>
-  s.translate_from ?? (TARGET_CODE[s.translate_target] === "en" ? "ar" : "auto");
+// Mirrors Rust `effective_translate_from`: unset means auto-detect.
+const translateFrom = (s: Settings) => s.translate_from ?? "auto";
 
 // API engine model picker, per provider. First entry is the default — the fast,
 // cheap model, which is the right pick for the light text cleanup the enhance

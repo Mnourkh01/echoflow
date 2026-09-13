@@ -143,7 +143,6 @@ impl Db {
                     full_text: row.get(7)?,
                     pinned: row.get::<_, i64>(8)? != 0,
                     segments: Vec::new(),
-                    translate_warning: false,
                     enhance_failed: false,
                     enhance_rejected: false,
                     paste_blocked: false,

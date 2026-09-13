@@ -226,7 +226,7 @@ const SILENCE_PHRASES: &[&str] = &[
     "شكراً للمشاهدة",
 ];
 
-fn normalize_words(s: &str) -> String {
+pub(crate) fn normalize_words(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_alphanumeric() || c.is_whitespace())
         .collect::<String>()
@@ -278,6 +278,90 @@ mod silence_artifact_tests {
         assert!(!is_silence_artifact("EchoFlow.", Some(vocab)));
         assert!(!is_silence_artifact("Send it to Folowise today.", Some(vocab)));
         assert!(!is_silence_artifact("", Some(vocab)));
+    }
+}
+
+/// Longest phrase, in words, that `collapse_loops` looks for.
+const LOOP_MAX_PHRASE: usize = 20;
+
+/// Whisper's runaway loop: after the decoder loses the audio it writes one
+/// phrase over and over ("I think it should be prepared" twenty times). A run
+/// is one word said 4+ times back to back, or a phrase of 2+ words said 3+
+/// times; each run keeps a single copy. None when the text has no run, so
+/// ordinary repeats ("no, no, no", a phrase said twice) are never touched.
+pub fn collapse_loops(text: &str) -> Option<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let keys: Vec<String> = words.iter().map(|w| normalize_words(w)).collect();
+    let mut out: Vec<&str> = Vec::with_capacity(words.len());
+    let mut changed = false;
+    let mut i = 0;
+    'scan: while i < words.len() {
+        for n in 1..=LOOP_MAX_PHRASE.min((words.len() - i) / 2) {
+            let phrase = &keys[i..i + n];
+            if phrase.iter().all(String::is_empty) {
+                continue;
+            }
+            let mut runs = 1;
+            while i + (runs + 1) * n <= words.len() && keys[i + runs * n..i + (runs + 1) * n] == *phrase {
+                runs += 1;
+            }
+            if runs >= if n == 1 { 4 } else { 3 } {
+                out.extend_from_slice(&words[i..i + n - 1]);
+                // The last copy's final word keeps the run's closing punctuation.
+                out.push(words[i + runs * n - 1]);
+                i += runs * n;
+                changed = true;
+                continue 'scan;
+            }
+        }
+        out.push(words[i]);
+        i += 1;
+    }
+    changed.then(|| out.join(" "))
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::collapse_loops;
+
+    #[test]
+    fn his_looped_translate_take_keeps_one_copy() {
+        let looped = "We can prepare it. I think it should be prepared, I think it should be prepared, \
+I think it should be prepared, I think it should be prepared.";
+        assert_eq!(
+            collapse_loops(looped).as_deref(),
+            Some("We can prepare it. I think it should be prepared.")
+        );
+    }
+
+    #[test]
+    fn a_looped_arabic_decode_is_caught() {
+        let raw = "يجب عليها تحضيرها يجب عليها تحضيرها يجب عليها تحضيرها \
+أعتقد أن تحضيرها أعتقد أن تحضيرها أعتقد أن تحضيرها أعتقد أن تحضيرها";
+        assert_eq!(collapse_loops(raw).as_deref(), Some("يجب عليها تحضيرها أعتقد أن تحضيرها"));
+    }
+
+    #[test]
+    fn one_word_needs_four_in_a_row() {
+        assert_eq!(
+            collapse_loops("prepared, prepared, prepared, prepared, prepared.").as_deref(),
+            Some("prepared.")
+        );
+        assert_eq!(collapse_loops("No, no, no, I said Tuesday."), None);
+    }
+
+    #[test]
+    fn ordinary_speech_is_untouched() {
+        for s in [
+            "We can't prepare it, we can't prepare it, so let's wait.",
+            "Thank you.",
+            "",
+            "Very very good.",
+            "لا يمكننا تحضيرها لا يمكننا تحضيرها",
+            "... ... ... ...",
+        ] {
+            assert_eq!(collapse_loops(s), None, "{s}");
+        }
     }
 }
 

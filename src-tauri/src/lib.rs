@@ -443,6 +443,10 @@ fn stop_and_notify(app: &tauri::AppHandle) {
                 log::info!("hotkey: discarded ({reason})");
                 let _ = app2.emit("rec-canceled", reason);
             }
+            Err(e) if e == commands::WRONG_LANGUAGE => {
+                log::info!("hotkey: discarded (wrong language)");
+                let _ = app2.emit("rec-canceled", "wrong-language");
+            }
             Err(e) => {
                 log::warn!("hotkey: transcribe failed: {e}");
                 let _ = app2.emit("rec-error", e);
