@@ -191,56 +191,93 @@ pub fn to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
-/// Resample mono audio between two rates with linear interpolation. Good enough
-/// for speech; a polyphase resampler is a later refinement.
+/// Zero crossings of the sinc kernel on each side of its centre: 48 puts the
+/// band edge within ~0.6 kHz of the cutoff at ~300 taps per output sample.
+const SINC_ZERO_CROSSINGS: f64 = 48.0;
+
+/// Band-limited resample: a Blackman-Harris windowed-sinc low-pass run as a
+/// polyphase filter bank (one row of taps per output phase), cutoff at 47% of
+/// the lower rate, near the ffmpeg resampler Whisper's training audio went
+/// through. From the 48 kHz laptop mic the speech band stays flat to ~6.9 kHz
+/// and everything above ~8.1 kHz is removed; the old moving average plus
+/// linear interpolation let 8-24 kHz hiss fold back into the speech band at only
+/// -3 to -12 dB, smearing the consonants Whisper tells words apart by.
 pub fn resample(mono: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate || mono.is_empty() {
+    if from_rate == to_rate || from_rate == 0 || to_rate == 0 || mono.is_empty() {
         return mono.to_vec();
     }
-    // Anti-alias when downsampling (e.g. 44.1/48 kHz mics -> 16 kHz): a short
-    // moving-average low-pass before linear interpolation tames the aliasing that
-    // otherwise smears consonants and hurts recognition accuracy. Upsampling
-    // (the denoise path's 48 kHz hop) needs no pre-filter.
-    let filtered;
-    let src: &[f32] = if to_rate < from_rate {
-        let width = ((from_rate as f32 / to_rate as f32).round() as usize).max(2);
-        filtered = box_filter(mono, width);
-        &filtered
-    } else {
-        mono
-    };
-    let ratio = to_rate as f64 / from_rate as f64;
-    let out_len = ((src.len() as f64) * ratio).round() as usize;
-    let mut out = Vec::with_capacity(out_len);
-    for i in 0..out_len {
-        let pos = i as f64 / ratio;
-        let idx = pos.floor() as usize;
-        let frac = (pos - idx as f64) as f32;
-        let a = src.get(idx).copied().unwrap_or(0.0);
-        let b = src.get(idx + 1).copied().unwrap_or(a);
-        out.push(a + (b - a) * frac);
+    let g = gcd(from_rate, to_rate);
+    let (up, down) = ((to_rate / g) as usize, (from_rate / g) as usize);
+    // Cutoff in cycles per input sample.
+    let fc = 0.47 * from_rate.min(to_rate) as f64 / from_rate as f64;
+    let half = (SINC_ZERO_CROSSINGS / (2.0 * fc)).ceil() as usize;
+    let taps = 2 * half;
+
+    // Row p serves outputs that land p/up of the way past input sample `base`;
+    // tap k reads input `base + k + 1 - half`. Each row is scaled to unity gain.
+    let mut bank = vec![0f32; up * taps];
+    for (p, row) in bank.chunks_exact_mut(taps).enumerate() {
+        let frac = p as f64 / up as f64;
+        let coeffs: Vec<f64> = (0..taps)
+            .map(|k| {
+                let t = (k + 1) as f64 - half as f64 - frac;
+                let arg = std::f64::consts::PI * 2.0 * fc * t;
+                let sinc = if t == 0.0 { 1.0 } else { arg.sin() / arg };
+                sinc * blackman_harris(t / half as f64)
+            })
+            .collect();
+        let sum: f64 = coeffs.iter().sum();
+        for (slot, c) in row.iter_mut().zip(&coeffs) {
+            *slot = (c / sum) as f32;
+        }
     }
-    out
+
+    let out_len = ((mono.len() * up + down / 2) / down).max(1);
+    (0..out_len)
+        .map(|n| {
+            let pos = n * down;
+            let row = &bank[(pos % up) * taps..][..taps];
+            dot_zero_padded(mono, (pos / up) as isize + 1 - half as isize, row)
+        })
+        .collect()
 }
 
-/// Trailing moving average of width `width`. Cheap O(n) low-pass used as a crude
-/// anti-alias filter ahead of downsampling. The small phase shift is irrelevant
-/// for speech recognition.
-fn box_filter(x: &[f32], width: usize) -> Vec<f32> {
-    if width <= 1 {
-        return x.to_vec();
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
     }
-    let mut out = Vec::with_capacity(x.len());
-    let mut sum = 0f32;
-    for i in 0..x.len() {
-        sum += x[i];
-        if i >= width {
-            sum -= x[i - width];
+}
+
+/// 4-term Blackman-Harris window over x in [-1, 1] (about -92 dB sidelobes).
+fn blackman_harris(x: f64) -> f64 {
+    if x.abs() >= 1.0 {
+        return 0.0;
+    }
+    let a = std::f64::consts::PI * x;
+    0.35875 + 0.48829 * a.cos() + 0.14128 * (2.0 * a).cos() + 0.01168 * (3.0 * a).cos()
+}
+
+/// `taps` dotted with `x[start..]`, reading zeros outside `x`.
+fn dot_zero_padded(x: &[f32], start: isize, taps: &[f32]) -> f32 {
+    let lo = start.max(0) as usize;
+    let hi = (start + taps.len() as isize).clamp(0, x.len() as isize) as usize;
+    if lo >= hi {
+        return 0.0;
+    }
+    let xs = &x[lo..hi];
+    let ts = &taps[(lo as isize - start) as usize..][..xs.len()];
+    // Eight independent sums let the compiler vectorize the loop.
+    let (cx, ct) = (xs.chunks_exact(8), ts.chunks_exact(8));
+    let tail: f32 = cx.remainder().iter().zip(ct.remainder()).map(|(a, b)| a * b).sum();
+    let mut acc = [0f32; 8];
+    for (a, b) in cx.zip(ct) {
+        for j in 0..8 {
+            acc[j] += a[j] * b[j];
         }
-        let count = (i + 1).min(width) as f32;
-        out.push(sum / count);
     }
-    out
+    acc.iter().sum::<f32>() + tail
 }
 
 /// Resample mono audio to 16 kHz (Whisper's required rate).
@@ -416,5 +453,58 @@ mod tests {
     #[test]
     fn normal_speech_is_speech() {
         assert!(speech_present(&clip(&[(8_000, 0.0), (16_000, 0.1), (8_000, 0.0)])));
+    }
+
+    fn tone(rate: u32, hz: f32, amp: f32) -> Vec<f32> {
+        let step = 2.0 * std::f32::consts::PI * hz / rate as f32;
+        (0..rate as usize).map(|i| amp * (step * i as f32).sin()).collect()
+    }
+
+    /// Level of the middle half of a resampled one-second tone of amplitude 0.5,
+    /// in dB against the input, away from the filter's edge ramps.
+    fn gain_db(out: &[f32]) -> f32 {
+        let q = out.len() / 4;
+        let mid = &out[q..out.len() - q];
+        let rms = (mid.iter().map(|&s| s * s).sum::<f32>() / mid.len() as f32).sqrt();
+        20.0 * (rms / (0.5 / 2f32.sqrt())).log10()
+    }
+
+    #[test]
+    fn downsampling_removes_what_16k_cannot_hold() {
+        // The laptop mic runs at 48 kHz. Sound above 8 kHz must vanish, not fold
+        // back into the speech band as a false tone (20 kHz lands on 4 kHz).
+        for (rate, hz) in [(48_000, 9_000.0), (48_000, 12_000.0), (48_000, 20_000.0), (44_100, 10_000.0)] {
+            let out = resample(&tone(rate, hz, 0.5), rate, TARGET_RATE);
+            assert_eq!(out.len(), 16_000);
+            let db = gain_db(&out);
+            assert!(db < -60.0, "{hz} Hz from {rate} Hz leaked through at {db:.1} dB");
+        }
+    }
+
+    #[test]
+    fn downsampling_keeps_the_speech_band_flat() {
+        for (rate, hz) in [(48_000, 150.0), (48_000, 3_000.0), (48_000, 6_000.0), (44_100, 6_000.0)] {
+            let db = gain_db(&resample(&tone(rate, hz, 0.5), rate, TARGET_RATE));
+            assert!(db.abs() < 0.1, "{hz} Hz from {rate} Hz came out at {db:.2} dB");
+        }
+    }
+
+    /// Cost of a minute of 48 kHz mic audio (ignored; run with
+    /// `cargo test --release --lib resample_speed -- --ignored --nocapture`).
+    #[test]
+    #[ignore]
+    fn resample_speed() {
+        let minute: Vec<f32> = (0..60).flat_map(|_| tone(48_000, 440.0, 0.5)).collect();
+        let t0 = std::time::Instant::now();
+        let out = resample(&minute, 48_000, TARGET_RATE);
+        eprintln!("60 s at 48 kHz -> {} samples in {:.1} ms", out.len(), t0.elapsed().as_secs_f64() * 1e3);
+    }
+
+    #[test]
+    fn upsampling_keeps_the_tone() {
+        let out = resample(&tone(16_000, 1_000.0, 0.5), 16_000, 48_000);
+        assert_eq!(out.len(), 48_000);
+        let db = gain_db(&out);
+        assert!(db.abs() < 0.1, "1 kHz came out at {db:.2} dB");
     }
 }
