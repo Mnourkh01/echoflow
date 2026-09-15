@@ -652,6 +652,37 @@ mod tests {
         }
     }
 
+    /// Accuracy and speed bench over real dictations: `replay_decode` with the
+    /// wall time of each decode, one tab-separated line per clip on stdout so
+    /// runs on different models or prompts can be diffed line by line.
+    #[test]
+    #[ignore]
+    fn replay_bench() {
+        let (engine, files) = replay_setup();
+        let lang = std::env::var("ECHOFLOW_REPLAY_LANG").unwrap_or_else(|_| "en".into());
+        let vocab = std::env::var("ECHOFLOW_REPLAY_VOCAB").unwrap_or_default();
+        let cancel = Arc::new(AtomicBool::new(false));
+        // The first decode pays the GPU pipeline setup; keep it out of the numbers.
+        engine.transcribe(&read_wav_16k_mono(&files[0]), &lang, false, "auto", &vocab, false, &cancel).unwrap();
+        let (mut decode, mut audio_secs) = (0.0f64, 0.0f64);
+        for f in &files {
+            let audio = read_wav_16k_mono(f);
+            let t0 = std::time::Instant::now();
+            let t = engine.transcribe(&audio, &lang, false, "auto", &vocab, false, &cancel).unwrap();
+            let secs = t0.elapsed().as_secs_f64();
+            decode += secs;
+            audio_secs += audio.len() as f64 / 16_000.0;
+            println!(
+                "{}\t{:.2}\t{:.3}\t{}",
+                f.file_name().unwrap().to_string_lossy(),
+                secs,
+                t.avg_logprob.unwrap_or(0.0),
+                t.full_text
+            );
+        }
+        eprintln!("decoded {audio_secs:.0} s of audio in {decode:.1} s");
+    }
+
     /// Quiet-speech sweep: each clip is turned down, padded with a second of
     /// mic-floor noise on both sides, and run through the real capture pipeline
     /// (`prepare_for_whisper`, with and without RNNoise) before decoding. The
