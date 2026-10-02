@@ -56,7 +56,12 @@ windows-sys = { version = "0.59", features = [
 default = []
 gpu-vulkan = ["whisper-rs/vulkan"]
 
+# Full debug info for every dependency was most of the build directory's size. Line tables
+# are enough to name the function and line a panic landed in.
 [profile.dev]
+debug = "line-tables-only"
+
 # whisper.cpp is unusably slow without optimization, even in dev builds.
 [profile.dev.package."*"]
 opt-level = 3
+debug = false
