@@ -42,6 +42,7 @@ const settings: Settings = {
   ai_engine: "cli",
   cli_command: "claude",
   cli_model: "sonnet",
+  cli_effort: "low",
   api_provider: "anthropic",
   api_key: "",
   api_model: "",
@@ -87,6 +88,24 @@ mockIPC(
       case "download_model":
         fakeDownload((payload as { name: string }).name, models, fail === "download");
         return null;
+      case "cli_models":
+        // Real probes take about a second; `&fail=cli` shows the fallback list.
+        return new Promise((resolve, reject) =>
+          setTimeout(() => {
+            if (fail === "cli") return reject("could not start 'claude'");
+            resolve({
+              cli_version: "2.1.287",
+              checked_at: Date.now() / 1000,
+              models: [
+                { alias: "haiku", id: "claude-haiku-4-5-20251001" },
+                { alias: "sonnet", id: "claude-sonnet-5-5" },
+                { alias: "opus", id: "claude-opus-5-5" },
+                { alias: "fable", id: "claude-fable-5-1" },
+              ],
+              efforts: ["low", "medium", "high", "xhigh", "max"],
+            });
+          }, 900)
+        );
       case "list_input_devices":
         return ["Headset microphone"];
       case "get_usage":

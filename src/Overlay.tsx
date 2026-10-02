@@ -39,6 +39,9 @@ export default function Overlay() {
   const [notice, setNotice] = useState<PillNotice | null>(null);
   const langRef = useRef<Lang>("en");
   const noticeTimer = useRef<number | undefined>(undefined);
+  // The delayed hide from the last take; a new take must cancel it or the pill
+  // vanishes mid-recording.
+  const hideTimer = useRef<number | undefined>(undefined);
   const self = getCurrentWindow();
 
   function showNotice(n: PillNotice) {
@@ -52,6 +55,7 @@ export default function Overlay() {
     const t = (key: StringKey) => translate(langRef.current, key);
     const offStart = listen("rec-started", async () => {
       window.clearTimeout(noticeTimer.current);
+      window.clearTimeout(hideTimer.current);
       setNotice(null);
       setMode("recording");
       try {
@@ -60,7 +64,10 @@ export default function Overlay() {
         /* ignore */
       }
     });
-    const offStop = listen("rec-stopped", () => setMode("processing"));
+    const offStop = listen("rec-stopped", () => {
+      window.clearTimeout(hideTimer.current);
+      setMode("processing");
+    });
     const offResult = listen<RecordingResult>("dictation-result", (e) => {
       const r = e.payload;
       if (r?.paste_blocked) {
@@ -133,7 +140,8 @@ export default function Overlay() {
     setMode("idle");
     setLevel(0);
     // Hide after a beat, but stay if the app is minimized into the pill.
-    window.setTimeout(async () => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(async () => {
       try {
         const main = await Window.getByLabel("main");
         const mainVisible = main ? await main.isVisible() : true;

@@ -146,6 +146,7 @@ impl Db {
                     enhance_failed: false,
                     enhance_rejected: false,
                     paste_blocked: false,
+                    save_failed: false,
                 })
             },
         ).map_err(|e| anyhow!("recording {id} not found: {e}"))?;
@@ -355,17 +356,29 @@ impl Db {
             [],
             |row| row.get::<_, String>(0),
         );
+        // Defaults for a row we could not read keep everything: the user may have
+        // chosen "keep forever", and a save from the UI (which shows these values)
+        // must never turn the default 14-day window into a silent purge.
+        let unreadable = || Settings {
+            retention_days: 0,
+            ..Settings::default()
+        };
         match row {
             Err(rusqlite::Error::QueryReturnedNoRows) => (Settings::default(), true),
             Err(e) => {
                 log::warn!("settings read failed, using defaults: {e}");
-                (Settings::default(), false)
+                (unreadable(), false)
             }
             Ok(json) => match serde_json::from_str(&json) {
                 Ok(s) => (s, true),
                 Err(e) => {
                     log::warn!("settings parse failed, using defaults: {e}");
-                    (Settings::default(), false)
+                    // Keep the original text before anything overwrites the row.
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES ('app.unreadable', ?1)",
+                        [&json],
+                    );
+                    (unreadable(), false)
                 }
             },
         }
@@ -492,6 +505,14 @@ mod tests {
             .lock()
             .execute("INSERT INTO settings (key, value) VALUES ('app', '{not json')", [])
             .unwrap();
-        assert!(!db.load_settings().1);
+        let (s, ok) = db.load_settings();
+        assert!(!ok);
+        assert_eq!(s.retention_days, 0, "unreadable settings must never purge");
+        let backup: String = db
+            .conn
+            .lock()
+            .query_row("SELECT value FROM settings WHERE key = 'app.unreadable'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(backup, "{not json");
     }
 }

@@ -1,7 +1,7 @@
 //! Tauri command surface. Thin glue: validate, call into state/modules, map
 //! errors to strings the frontend can show.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -74,6 +74,11 @@ fn write_wav_16k(path: &Path, audio: &[f32]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Whether the push-to-talk key is actually registered right now. A save that
+/// leaves the keys unchanged still retries when the last registration failed,
+/// instead of reporting success while the hotkey is dead.
+static PTT_REGISTERED: AtomicBool = AtomicBool::new(false);
+
 /// (Re)register every global shortcut: push-to-talk plus the window<->pill toggle.
 /// Both live on the one plugin, and registering calls `unregister_all()` first, so
 /// they MUST be registered together (registering PTT alone would drop the toggle).
@@ -95,6 +100,7 @@ pub fn register_shortcuts(app: &AppHandle, ptt: &str, toggle: &str) -> bool {
             }
         }
     }
+    PTT_REGISTERED.store(ptt_ok, Ordering::SeqCst);
     ptt_ok
 }
 
@@ -320,7 +326,7 @@ fn type_into_focused(text: &str, leave_on_clipboard: bool, target: Option<isize>
     // and report blocked.
     if let Some(hwnd) = target {
         if !restore_focus(hwnd) {
-            let _ = clipboard::set_text(text);
+            let _ = clipboard::set_text(text, false);
             log::warn!(
                 "auto-type: could not focus the origin window; left {} chars on the clipboard",
                 text.chars().count()
@@ -331,14 +337,14 @@ fn type_into_focused(text: &str, leave_on_clipboard: bool, target: Option<isize>
     // Preserve the user's clipboard, paste ours, then restore it — unless we're
     // told to leave the result on the clipboard (auto-copy) for pasting elsewhere.
     let prior = clipboard::get_text();
-    match clipboard::set_text(text) {
+    match clipboard::set_text(text, !leave_on_clipboard) {
         Ok(()) => {
             clipboard::send_ctrl_v();
             // Give the target app time to read the paste before we restore.
             std::thread::sleep(std::time::Duration::from_millis(160));
             if !leave_on_clipboard {
                 if let Some(prev) = prior {
-                    let _ = clipboard::set_text(&prev);
+                    let _ = clipboard::set_text(&prev, true);
                 }
             }
             log::info!("auto-type: pasted {} chars", text.chars().count());
@@ -347,7 +353,7 @@ fn type_into_focused(text: &str, leave_on_clipboard: bool, target: Option<isize>
             log::warn!("auto-type: clipboard paste failed ({e}); using key events");
             send_unicode_chunked(text);
             if leave_on_clipboard {
-                let _ = clipboard::set_text(text);
+                let _ = clipboard::set_text(text, false);
             }
         }
     }
@@ -403,8 +409,10 @@ fn send_unicode_chunked(text: &str) {
 mod clipboard {
     use std::time::Duration;
     use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+        CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, RegisterClipboardFormatW,
+        SetClipboardData,
     };
+    use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
@@ -451,7 +459,36 @@ mod clipboard {
         }
     }
 
-    pub fn set_text(text: &str) -> Result<(), String> {
+    /// Mark what is on the open clipboard as kept out of Windows clipboard
+    /// history (Win+V) and cloud clipboard sync: the documented DWORD-0 formats.
+    unsafe fn exclude_from_history() {
+        for name in ["CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"] {
+            let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+            let format = RegisterClipboardFormatW(wide.as_ptr());
+            if format == 0 {
+                continue;
+            }
+            let h = GlobalAlloc(GMEM_MOVEABLE, 4);
+            if h.is_null() {
+                continue;
+            }
+            let p = GlobalLock(h) as *mut u32;
+            if p.is_null() {
+                GlobalFree(h);
+                continue;
+            }
+            *p = 0;
+            GlobalUnlock(h);
+            // On success the clipboard owns h; on failure it is still ours.
+            if SetClipboardData(format, h as _).is_null() {
+                GlobalFree(h);
+            }
+        }
+    }
+
+    /// `private`: a transient paste (our text on the way into the target app, or
+    /// the user's own clipboard put back) that must not land in clipboard history.
+    pub fn set_text(text: &str, private: bool) -> Result<(), String> {
         unsafe {
             // Open first: a busy clipboard is the common failure, and bailing here
             // means we never allocated, so there is nothing to leak.
@@ -476,6 +513,9 @@ mod clipboard {
             EmptyClipboard();
             // On success the system takes ownership of hmem (do not free it).
             let set = SetClipboardData(CF_UNICODETEXT, hmem as _);
+            if private && !set.is_null() {
+                exclude_from_history();
+            }
             CloseClipboard();
             if set.is_null() {
                 return Err("SetClipboardData failed".into());
@@ -547,12 +587,13 @@ fn run_enhance(
     text: &str,
     warm: Option<enhance::CliSession>,
 ) -> Result<String, EnhanceErr> {
-    let (engine, cli_command, cli_model, provider, base_url, api_key, api_model) = {
+    let (engine, cli_command, cli_model, cli_effort, provider, base_url, api_key, api_model) = {
         let s = state.settings.read();
         (
             s.ai_engine.clone(),
             s.cli_command.clone(),
             s.cli_model.clone(),
+            s.cli_effort.clone(),
             s.api_provider.clone(),
             s.api_base_url.clone(),
             s.api_key.clone(),
@@ -565,7 +606,7 @@ fn run_enhance(
     // my words" failure, which capable models hit on command-shaped dictation).
     let wrapped = enhance::wrap_transcript(text);
     let reply = if engine == "api" {
-        let r = enhance::run_api(&provider, &base_url, &api_key, &api_model, system, &wrapped)
+        let r = enhance::run_api(&provider, &base_url, &api_key, &api_model, system, &wrapped, &|| state.transcribe_canceled())
             .map_err(|e| EnhanceErr::Failed(e.to_string()))?;
         let _ = state.db.add_usage(r.input_tokens as i64, r.output_tokens as i64);
         log::info!(
@@ -576,18 +617,18 @@ fn run_enhance(
         enhance::unwrap_transcript(&r.text)
     } else {
         let warm = warm.and_then(|mut s| {
-            (s.matches(&cli_command, &cli_model, system) && s.is_alive()).then_some(s)
+            (s.matches(&cli_command, &cli_model, &cli_effort, system) && s.is_alive()).then_some(s)
         });
         let session = match warm {
             Some(s) => {
                 log::info!("enhance: using the CLI pre-spawned at record start");
                 s
             }
-            None => enhance::spawn_cli(&cli_command, &cli_model, system)
+            None => enhance::spawn_cli(&cli_command, &cli_model, &cli_effort, system)
                 .map_err(|e| EnhanceErr::Failed(e.to_string()))?,
         };
         session
-            .run(&wrapped)
+            .run(&wrapped, &|| state.transcribe_canceled())
             .map(|t| enhance::unwrap_transcript(&t))
             .map_err(|e| EnhanceErr::Failed(e.to_string()))?
     };
@@ -672,12 +713,13 @@ fn prespawn_cli(state: &AppState) {
     if slot == 0 {
         return; // the recording already ended
     }
-    let (engine, command, model, system) = {
+    let (engine, command, model, effort, system) = {
         let s = state.settings.read();
         (
             s.ai_engine.clone(),
             s.cli_command.clone(),
             s.cli_model.clone(),
+            s.cli_effort.clone(),
             EnhanceCfg::from_settings(&s).system_prompt(),
         )
     };
@@ -686,7 +728,7 @@ fn prespawn_cli(state: &AppState) {
         return;
     }
     let started = Instant::now();
-    match enhance::spawn_cli(&command, &model, &system) {
+    match enhance::spawn_cli(&command, &model, &effort, &system) {
         Ok(session) => {
             log::info!("enhance: CLI pre-spawned in {} ms", started.elapsed().as_millis());
             state.park_warm_cli(slot, session);
@@ -720,6 +762,32 @@ pub fn begin_recording(state: &AppState, device: Option<String>) -> Result<(), S
     Ok(())
 }
 
+/// A take's WAV, deleted when dropped unless `keep` was called: discarded and
+/// canceled takes leave nothing behind, failed ones keep what was said.
+struct TakeAudio {
+    path: PathBuf,
+    written: bool,
+    keep: bool,
+}
+
+impl TakeAudio {
+    fn new(path: PathBuf) -> Self {
+        Self { path, written: false, keep: false }
+    }
+
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for TakeAudio {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Stop capture, transcribe, save, and (optionally) type the result into the
 /// focused app. Shared by the command and the global hotkey handler.
 pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingResult>, String> {
@@ -728,7 +796,9 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
     // guard clears it on every exit path, including the early silent-discard.
     // Set before the recording slot empties: in between, the take would look
     // over and the cancel-key guard would let go of the key.
-    let _busy = state.begin_transcribing();
+    let _busy = state
+        .begin_transcribing()
+        .ok_or_else(|| "not recording".to_string())?;
     let handle = state
         .recording
         .lock()
@@ -761,6 +831,15 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
 
     let denoise = state.settings.read().noise_suppression;
     let audio_16k = audio::prepare_for_whisper(&captured, denoise);
+
+    // On disk before any decode or AI step, so a failure later never loses what
+    // was said. Discards and cancels below drop it; a failed decode keeps it.
+    let stamp = Utc::now().timestamp_millis();
+    let mut take_audio = TakeAudio::new(state.paths.new_audio_path(stamp));
+    match write_wav_16k(&take_audio.path, &audio_16k) {
+        Ok(()) => take_audio.written = true,
+        Err(e) => log::warn!("could not save the take's audio, continuing without it: {e}"),
+    }
 
     let (model, lang_mode, dialect, vocab, auto_type, auto_copy, keep_line_breaks, voice_commands, output_mode, translate_target, mix_arabic, cfg) = {
         let s = state.settings.read();
@@ -814,6 +893,14 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             Err(_) if state.transcribe_canceled() => {
                 log::info!("transcription canceled by user; clip discarded");
                 return Ok(None);
+            }
+            Err(e) if take_audio.written => {
+                take_audio.keep();
+                log::warn!("transcription failed, audio kept at {}: {e}", take_audio.path.display());
+                return Err(format!(
+                    "{e}. Your recording was kept at {}",
+                    take_audio.path.display()
+                ));
             }
             Err(e) => return Err(e.to_string()),
         };
@@ -1000,13 +1087,18 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         return Ok(None);
     }
 
-    let stamp = Utc::now().timestamp_millis();
-    let audio_path = state.paths.new_audio_path(stamp);
-    write_wav_16k(&audio_path, &audio_16k).map_err(|e| e.to_string())?;
     let created_at = Utc::now().to_rfc3339();
-    let audio_path_str = audio_path.to_string_lossy().into_owned();
+    // No file behind a failed write: store no path rather than a dead one.
+    let audio_path_str = if take_audio.written {
+        take_audio.path.to_string_lossy().into_owned()
+    } else {
+        String::new()
+    };
+    take_audio.keep();
 
-    let id = state
+    // Saved before typing so the result carries its id, but a failed save (disk
+    // full, locked DB) must not swallow the text: it is still typed below.
+    let saved = state
         .db
         .insert_recording(
             &created_at,
@@ -1021,7 +1113,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
             Some(&raw_text),
             Some(&take_diagnostics(&decode_lang, &source_lang, primed, ai_outcome, tail_cov, transcript.avg_logprob, whisper_loop)),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string());
 
     let has = has_words(&transcript.full_text);
     let did_type = inject && auto_type && has;
@@ -1044,11 +1136,19 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
         // result on the clipboard so the user can paste it anywhere.
         #[cfg(windows)]
         {
-            let _ = clipboard::set_text(&transcript.full_text);
+            let _ = clipboard::set_text(&transcript.full_text, false);
         }
     }
+    // The result still reaches the window (and its text the user) when the
+    // save failed; the UI says it is not in history.
+    let save_failed = saved.is_err();
+    let id = saved.unwrap_or_else(|e| {
+        log::error!("take not saved to history: {e}");
+        -1
+    });
 
     Ok(Some(RecordingResult {
+        save_failed,
         id,
         created_at,
         duration_ms,
@@ -1068,7 +1168,7 @@ pub fn end_recording(state: &AppState, inject: bool) -> Result<Option<RecordingR
 #[tauri::command]
 pub fn start_recording(app: AppHandle, state: State<AppState>, device: Option<String>) -> R<()> {
     begin_recording(state.inner(), device)?;
-    spawn_silence_guard(app.clone());
+    spawn_silence_guard(app.clone(), false);
     spawn_cancel_key_guard(app.clone());
     prepare_while_recording(&app);
     Ok(())
@@ -1078,7 +1178,9 @@ pub fn start_recording(app: AppHandle, state: State<AppState>, device: Option<St
 /// the grace window, auto-cancel and discard. Protects against a mis-click that
 /// would otherwise keep recording silence (especially in toggle mode). Runs in
 /// Rust so it works even when every window is hidden (JS timers get throttled).
-pub fn spawn_silence_guard(app: AppHandle) {
+/// `inject`: the take came from a global hotkey, so a take it ends (mic lost) is
+/// typed into the app the user started in; in-app takes are not.
+pub fn spawn_silence_guard(app: AppHandle, inject: bool) {
     std::thread::spawn(move || {
         let state = app.state::<AppState>();
         let start = Instant::now();
@@ -1090,6 +1192,14 @@ pub fn spawn_silence_guard(app: AppHandle) {
             }
             if state.current_level() >= SPEECH_LEVEL {
                 heard_speech = true;
+            }
+            // Mic unplugged or lost mid-take: end the take now and transcribe
+            // what was captured, instead of recording silence until a stop.
+            if state.recording.lock().as_ref().is_some_and(|h| h.failed()) {
+                log::warn!("microphone failed mid-take; ending the take");
+                let _ = app.emit("rec-notice", "mic_lost_notice"); // an i18n key
+                crate::stop_and_notify(&app, inject);
+                return;
             }
             if !heard_speech && start.elapsed() >= NO_SPEECH_GRACE {
                 if let Some(handle) = state.recording.lock().take() {
@@ -1290,6 +1400,21 @@ pub fn get_settings(state: State<AppState>) -> Settings {
     state.settings.read().clone()
 }
 
+/// Models and effort levels the CLI offers right now, for the Settings picker.
+/// Async + blocking pool: a probe spawns the CLI and takes about a second.
+#[tauri::command]
+pub async fn cli_models(
+    state: State<'_, AppState>,
+    command: String,
+    refresh: bool,
+) -> Result<crate::cli_models::CliModels, String> {
+    let cache = state.paths.data_dir.join("cli_models.json");
+    tauri::async_runtime::spawn_blocking(move || crate::cli_models::list(&command, &cache, refresh))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// Delete recordings past the retention window, plus their audio files. Runs at
 /// launch, on settings save, and on every idle-monitor tick, so a tray app left
 /// open for days still honours the setting. Returns the deleted ids.
@@ -1349,7 +1474,7 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
     // Notify other windows (the floating pill) so live-applied settings like the
     // accent palette take effect everywhere without a restart.
     let _ = app.emit("settings-changed", state.settings.read().clone());
-    let ok = if ptt != old_ptt || toggle != old_toggle {
+    let ok = if ptt != old_ptt || toggle != old_toggle || !PTT_REGISTERED.load(Ordering::SeqCst) {
         // Re-registering drops every live shortcut for a moment. If a hold-mode
         // recording is in flight, its release event would be lost and the
         // recording would stick — discard it first so state stays consistent.
@@ -1363,7 +1488,7 @@ pub fn update_settings(app: AppHandle, state: State<AppState>, settings: Setting
         }
         register_shortcuts(&app, &ptt, &toggle)
     } else {
-        true // unchanged: leave the live shortcuts intact
+        true // unchanged and live: leave the shortcuts intact
     };
     Ok(ok)
 }
@@ -1944,8 +2069,8 @@ mod tests {
                 t.full_text
             );
             if live {
-                let reply = enhance::spawn_cli("claude", "sonnet", &system)
-                    .and_then(|s| s.run(&enhance::wrap_transcript(&t.full_text)))
+                let reply = enhance::spawn_cli("claude", "sonnet", "low", &system)
+                    .and_then(|s| s.run(&enhance::wrap_transcript(&t.full_text), &|| false))
                     .map(|r| enhance::unwrap_transcript(&r));
                 eprintln!("  AI -> {reply:?}");
             }
@@ -2027,8 +2152,8 @@ mod tests {
             .expect("an enhance mode");
         for said in cases.lines().map(str::trim).filter(|l| !l.is_empty()) {
             let started = Instant::now();
-            let reply = enhance::spawn_cli("claude", &model, &system)
-                .and_then(|s| s.run(&enhance::wrap_transcript(said)))
+            let reply = enhance::spawn_cli("claude", &model, &env("ECHOFLOW_CLI_EFFORT", "low"), &system)
+                .and_then(|s| s.run(&enhance::wrap_transcript(said), &|| false))
                 .map(|r| crate::text::replace_dashes(&enhance::unwrap_transcript(&r)));
             let ms = started.elapsed().as_millis();
             match reply {

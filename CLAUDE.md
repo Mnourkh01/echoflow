@@ -116,7 +116,22 @@ and already installed on this machine.
 - Vibe engineer mode (formerly Prompt mode) keeps the internal id `prompt`
   (settings value, menu ids). It rewrites rough dev talk in a senior engineer's
   voice with the precise term for what was said, never code, a plan or new
-  scope, and it is not exempt from the answer-shaped length guard.
+  scope, and it is not exempt from the answer-shaped length guard. Its prompt
+  carries a glossary of AI/dev names Whisper mishears (cloud code -> Claude Code,
+  codecs -> Codex...) and a rule that names are never replaced by a generic word.
+  `check_reply` also rejects a short take's reply that keeps under 20% of the
+  said content words (an answer such as "Paris.").
+- CLI models and effort levels are never hard-coded: `cli_models::list` reads the
+  aliases and levels from `claude --help` and resolves each alias to its model id
+  from a throwaway session's `init` event (killed before the reply), cached in
+  app-data `cli_models.json` per CLI version for a day. `cli_effort` low (default)
+  also sets `MAX_THINKING_TOKENS=0`; higher levels let the model think.
+- A take's WAV is written before decoding (`TakeAudio`): discards and cancels
+  delete it, a failed decode keeps it, and a failed history save still delivers
+  the text (`save_failed`, id -1). The silence guard also ends a take whose mic
+  failed (`rec-notice` carries an i18n key).
+- `tauri-plugin-single-instance` is registered in release builds only: dev shares
+  the release identifier and would otherwise exit into the installed app.
 - Quiet speech: `audio::speech_present` (30 ms frames) is the silence gate, the VAD
   floor is 4e-4 on the 95th-percentile frame, `SPEECH_LEVEL` is 0.003. Re-run
   `whisper::tests::replay_quiet_speech` after touching any of them.

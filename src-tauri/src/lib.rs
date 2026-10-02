@@ -1,4 +1,5 @@
 mod audio;
+mod cli_models;
 mod commands;
 mod db;
 mod enhance;
@@ -118,7 +119,10 @@ fn apply_output_mode(app: &tauri::AppHandle, mode: &str) {
         }
         s.clone()
     };
-    let _ = state.db.save_settings(&settings);
+    // Like set_model: never write defaults over a stored row we could not read.
+    if state.settings_trusted() {
+        let _ = state.db.save_settings(&settings);
+    }
     refresh_tray_menu(app);
     let _ = app.emit("settings-changed", settings);
 }
@@ -127,8 +131,10 @@ fn apply_output_mode(app: &tauri::AppHandle, mode: &str) {
 pub fn run() {
     // Log to a FILE in app-data, not just stderr: the release exe is a Windows
     // GUI app with no console, so stderr logging is invisible exactly where we
-    // need it most (diagnosing issues on the user's machine). Truncated on each
-    // launch so it never grows unbounded; stderr still works for dev runs.
+    // need it most (diagnosing issues on the user's machine). Appended, not
+    // truncated: a second launch (refused by the single-instance plugin below)
+    // must not wipe the running app's log. Restarted past 4 MB so it stays small;
+    // stderr still works for dev runs.
     let mut builder =
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
     let data_dir = std::env::var_os("APPDATA")
@@ -138,13 +144,29 @@ pub fn run() {
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(file) = std::fs::File::create(&log_path) {
+    let too_big = std::fs::metadata(&log_path).is_ok_and(|m| m.len() > 4 * 1024 * 1024);
+    let file = if too_big {
+        std::fs::File::create(&log_path)
+    } else {
+        std::fs::OpenOptions::new().create(true).append(true).open(&log_path)
+    };
+    if let Ok(file) = file {
         builder.target(env_logger::Target::Pipe(Box::new(file)));
     }
     builder.try_init().ok();
     log::info!("EchoFlow starting (v{})", env!("CARGO_PKG_VERSION"));
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // First, so a second launch (Start menu while we sit in the tray) only
+    // brings this window forward instead of fighting over hotkeys, DB and mic.
+    // Release builds only: dev shares the release identifier, and the lock would
+    // make `tauri dev` exit into the installed app.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        log::info!("second launch refused; showing the running app");
+        show_main(app);
+    }));
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -204,7 +226,7 @@ pub fn run() {
                                         return;
                                     }
                                     if recording {
-                                        stop_and_notify(app);
+                                        stop_and_notify(app, true);
                                     } else if !busy {
                                         start_and_notify(app);
                                     }
@@ -217,7 +239,7 @@ pub fn run() {
                             }
                             ShortcutState::Released => {
                                 if mode == "hold" && recording {
-                                    stop_and_notify(app);
+                                    stop_and_notify(app, true);
                                 }
                             }
                         }
@@ -389,6 +411,7 @@ pub fn run() {
             commands::delete_prompt,
             commands::export_recording,
             commands::get_settings,
+            commands::cli_models,
             commands::update_settings,
             commands::list_models,
             commands::download_model,
@@ -411,7 +434,7 @@ fn start_and_notify(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     match commands::begin_recording(state.inner(), None) {
         Ok(()) => {
-            commands::spawn_silence_guard(app.clone());
+            commands::spawn_silence_guard(app.clone(), true);
             commands::spawn_cancel_key_guard(app.clone());
             commands::prepare_while_recording(app);
             let _ = app.emit("rec-started", ());
@@ -425,13 +448,13 @@ fn start_and_notify(app: &tauri::AppHandle) {
 
 /// Stop capture from the global hotkey, then transcribe + type on a worker
 /// thread so the hotkey handler returns immediately.
-fn stop_and_notify(app: &tauri::AppHandle) {
+pub(crate) fn stop_and_notify(app: &tauri::AppHandle, inject: bool) {
     log::info!("hotkey: stop -> transcribe + auto-type");
     let _ = app.emit("rec-stopped", ());
     let app2 = app.clone();
     std::thread::spawn(move || {
         let state = app2.state::<AppState>();
-        match commands::end_recording(state.inner(), true) {
+        match commands::end_recording(state.inner(), inject) {
             Ok(Some(res)) => {
                 log::info!("hotkey: result ({}) '{}'", res.language, res.full_text);
                 let _ = app2.emit("dictation-result", res);
@@ -447,6 +470,9 @@ fn stop_and_notify(app: &tauri::AppHandle) {
                 log::info!("hotkey: discarded (wrong language)");
                 let _ = app2.emit("rec-canceled", "wrong-language");
             }
+            // A second stop racing the first (mic lost, then the key released):
+            // the take is already being handled, nothing to report.
+            Err(e) if e == "not recording" => log::info!("hotkey: stop ignored, take already ending"),
             Err(e) => {
                 log::warn!("hotkey: transcribe failed: {e}");
                 let _ = app2.emit("rec-error", e);

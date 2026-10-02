@@ -28,6 +28,7 @@ export interface RecordingResult {
   // True when auto-type couldn't reach the origin field (window gone, or an admin
   // window blocking input). Text was left on the clipboard instead.
   paste_blocked?: boolean;
+  save_failed?: boolean; // delivered, but not saved to history (id is -1)
 }
 
 export interface RecordingSummary {
@@ -76,7 +77,8 @@ export interface Settings {
   mix_arabic: boolean; // English lock + AI step: keep spoken Arabic words for the AI to translate
   ai_engine: "cli" | "api";
   cli_command: string;
-  cli_model: string; // CLI model: "haiku" (default) | "sonnet" | "opus"
+  cli_model: string; // CLI model alias: "haiku" (default) or any alias the CLI offers
+  cli_effort: string; // CLI --effort: "low" (default, thinking off) .. "max"
   api_provider: "anthropic" | "openai" | "custom";
   api_key: string;
   api_model: string;
@@ -112,6 +114,18 @@ export interface DownloadEnd {
   message: string;
 }
 
+export interface CliModel {
+  alias: string;
+  id: string | null; // full model id the alias resolves to today; null if the probe failed
+}
+
+export interface CliModels {
+  cli_version: string;
+  checked_at: number;
+  models: CliModel[];
+  efforts: string[];
+}
+
 export interface AppStatus {
   model: string;
   model_present: boolean;
@@ -121,6 +135,8 @@ export interface AppStatus {
 
 export const api = {
   listInputDevices: () => invoke<string[]>("list_input_devices"),
+  cliModels: (command: string, refresh: boolean) =>
+    invoke<CliModels>("cli_models", { command, refresh }),
   startRecording: (device: string | null) =>
     invoke<void>("start_recording", { device }),
   stopRecording: () => invoke<RecordingResult | null>("stop_recording"),

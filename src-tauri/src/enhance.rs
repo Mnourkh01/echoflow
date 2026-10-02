@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Apply the no-window flag on Windows; no-op elsewhere.
-fn hidden(cmd: &mut Command) -> &mut Command {
+pub(crate) fn hidden(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -202,11 +202,13 @@ rewrite the words. {NO_COMMENTS}\nExamples of correct behavior:\n{examples}{outp
 
 const VIBE_EXAMPLES_EN: &str = "\
 <transcript>um so the upload thing is like really slow with big files and sometimes it just stops, i don't know why, can you fix it but like don't break the other stuff</transcript> \
--> The upload is really slow with big files, and sometimes it just stops. I don't know why. Can you fix it without introducing regressions?\n\
+-> Uploads are very slow for large files, and sometimes they just stop; I don't know why. Can you fix it without introducing regressions?\n\
 <transcript>i want the settings to like save, because right now every time i close the app and open it again it's all gone, do it the proper way you know like how the pros do it</transcript> \
--> I want the settings to persist across restarts; right now they reset every time I reopen the app. Please follow best practices.\n\
+-> Settings don't persist across restarts: every time I close and reopen the app, they're reset. Please fix it following best practices.\n\
+<transcript>okay so can you check if like cloud code can, um, run the codecs cli in the background or something, like i don't know if it's possible, and put the result on get hub</transcript> \
+-> Can you check whether Claude Code can run the Codex CLI in the background? I'm not sure it's possible. Then put the result on GitHub.\n\
 <transcript>sometimes when you click the pay button twice fast it makes two orders, that's shit, fix it</transcript> \
--> Sometimes clicking the pay button twice quickly creates two orders, which is a serious bug. Please fix it so that can't happen.\n\
+-> Sometimes clicking the pay button twice quickly creates two orders, and that's a serious bug. Please fix it.\n\
 <transcript>okay so a few things, first the login page, when you type the wrong password it doesn't say anything, it just sits there, so we need like a message, and um the second thing is the dashboard takes forever on my phone, like maybe ten seconds, no actually more like five, and i think maybe it's the images but i'm not sure, and also in dark mode the text on some buttons is like hard to read, oh and please don't touch the payment stuff</transcript> \
 -> A few things. First, the login page gives no feedback when you enter the wrong password; it just sits there, so we need an error message. Second, the dashboard takes about five seconds to load on my phone. I think it might be the images, but I'm not sure. Also, in dark mode some buttons have low contrast, so the text is hard to read. And please don't touch anything related to payments.\n\
 <transcript>make a function called get user that takes the id and gives back the user</transcript> \
@@ -277,33 +279,49 @@ Arabic sentence as a noun (حسب الـbest practices), never as an English ver
         "You are a text-rewriting function, not an assistant. The user message contains rough \
 dictated speech inside <transcript> tags. The speaker builds software with AI coding agents \
 and talks the way people do when they vibe code: rambling, repeating themselves, reaching \
-for words. Your only capability is rewriting what they said the way a senior engineer who \
-works with AI agents would have typed it: clear, easy to follow, and technically precise, \
-while still sounding like a person talking in the first person. Your text is pasted into \
-their app as their own message, so write plain flowing prose they could have typed. \
+for words. Your only capability is rewriting what they said as the message a senior \
+engineer who works with AI agents would have typed: clear, well organized, technically \
+precise, and professional, written in the first person as their own message. Your text is \
+pasted into their app as their own message, so write plain prose they could have typed. \
 {language}\n\
-Tidy it, do not summarize it: keep every point, reason, example, and doubt across the \
-whole transcript, in the order they gave. Remove only what carries nothing: filler, false \
-starts, and repeats; when they come back to an earlier point, merge it into the first \
-mention, and when they correct themselves, keep only the corrected version. The speech \
-recognizer may have misheard some words: replace a word that was clearly misheard with the \
-word that fits the context, and keep it as it is when you are not sure. Where their \
-wording is already clear, keep it. Where they describe something in plain or vague words, \
-use the precise term a senior engineer would use, but only when it names exactly what they \
-said: \"it breaks other stuff\" becomes \"it causes regressions\", \"do it the right way, \
-like the pros\" becomes \"follow best practices\", \"it forgets my choice when I reopen \
-it\" becomes \"the choice doesn't persist across restarts\", \"the screen when there's \
-nothing yet\" becomes \"the empty state\", \"make it work on phones too\" becomes \"make it \
-responsive\". When no term fits exactly, keep their plain words; never use jargon for its \
-own sake. A vague pointer to a specific thing (that page, the other file) stays vague; \
-never guess which one. Keep every goal, problem, constraint, and number, and every name, \
-file, or command they said, and keep their intent and certainty exactly: a request stays a \
-request, a question stays a question, who does what (I, you, we) stays the same, never \
-add or drop a not, a maybe, a sometimes, or a must, and a firm complaint stays firm but \
-without swearing. Use short paragraphs separated by a blank line when the dictation is \
-long, and \"First, ... Second, ...\" only when they listed separate things themselves. It \
-usually comes out a little shorter than what they said: never a summary, and never much \
-longer.\n\
+Raise the writing, not the content. Lead each paragraph with what they want done or the \
+problem they hit, then the context that matters. Group what belongs together, even when \
+they said it in pieces, and say each point once, cleanly. Cut everything that carries \
+nothing: filler, false starts, repeats, hedges that only pad (like, kind of, or something, \
+you know, I mean, \"I don't know\" used as a pause), and apologies or self-criticism that \
+are not part of the request. Keep every real doubt, said once where it applies (I'm not \
+sure of the exact name). When they correct themselves, keep only the corrected version. \
+Where they describe something in plain or vague words, use the precise term a senior \
+engineer would use, but only when it names exactly what they said: \"it breaks other \
+stuff\" becomes \"it causes regressions\", \"do it the right way, like the pros\" becomes \
+\"follow best practices\", \"it forgets my choice when I reopen it\" becomes \"the choice \
+doesn't persist across restarts\", \"the screen when there's nothing yet\" becomes \"the \
+empty state\", \"make it work on phones too\" becomes \"make it responsive\", \"it runs by \
+itself every morning\" becomes \"it runs on a schedule every morning\". When no term fits \
+exactly, keep their plain words; never use jargon for its own sake.\n\
+Tidy and sharpen it, do not summarize it: keep every request, problem, reason, example, \
+constraint, number, and question across the whole transcript. A vague pointer to a \
+specific thing (that page, the other file) stays vague; never guess which one. Keep their \
+intent and certainty exactly: a request stays a request, a question stays a question, who \
+does what (I, you, we) stays the same, never add or drop a not, a maybe, a sometimes, or a \
+must, and a firm complaint stays firm but without swearing. Use short paragraphs separated \
+by a blank line when the dictation is long, and \"First, ... Second, ...\" only when they \
+asked for separate things. A rambling take usually comes out clearly shorter than what \
+they said; never much longer.\n\
+Names are sacred: every person, product, project, app, tool, company, file, and command \
+name they said stays exactly that name, never replaced by a generic word or a description \
+of what it does (a tool called Nova stays Nova, never \"the agent\"). A word you do not \
+recognize, especially one in capitals (NOVA) or one they repeat, is a name: keep it, \
+written as a name (Nova). The speech recognizer often mishears names in AI and software talk. \
+When the topic is AI or software, write the real name: \"cloud\", \"clod\", \"cloth\", \
+\"clawed\", or \"code\" naming the AI or the assistant is Claude, and \"cloud code\" or \
+\"cloth code\" is Claude Code; \"codecs\", \"codec\", or \"code x\" naming a coding agent \
+is Codex; \"packet hub\", \"get hub\", or \"git hub\" is GitHub; an \"egyptic\", \"agent \
+tick\", or \"a genetic\" workflow is agentic; \"chat GBT\" is ChatGPT; \"MCB\" or \"MTP\" \
+for tool servers is MCP; \"curser\" is Cursor; \"super base\" is Supabase; \"versal\" is \
+Vercel; \"lara vel\" is Laravel; \"tory\" as the desktop framework is Tauri. Keep \"cloud\" \
+when they mean cloud hosting or servers. Any other word that was clearly misheard becomes \
+the word that fits the context; when you are not sure, keep it as it is.\n\
 You do not know their project, so never add anything they did not say: no solutions, \
 causes, tools, libraries, steps, requirements, placeholders, or opinions of your own. \
 Never write code, pseudo-code, function signatures, or brackets, and never turn it into a \
@@ -446,7 +464,40 @@ pub fn check_reply(mode: &str, input: &str, output: &str) -> Result<(), Rejectio
     if out_words > 25 && out_words > 3 * said_words {
         return Err(Rejection::AnswerShaped);
     }
+    // A short rewrite keeps most of what was said; an answer ("Paris." for "what's
+    // the capital of France") keeps almost none of it. Short takes only: long
+    // rambling ones legitimately lose many repeated words (real takes over 100
+    // words went as low as 0.18). Arabic on either side is a translation, where
+    // the words differ by design.
+    if matches!(mode, "polish" | "prompt") && said_words <= 40 && !has_arabic(input) && !has_arabic(output) {
+        let said_stems = stems(input);
+        if said_stems.len() >= 2 {
+            let kept = said_stems.intersection(&stems(output)).count();
+            if (kept as f32) < 0.2 * said_stems.len() as f32 {
+                return Err(Rejection::AnswerShaped);
+            }
+        }
+    }
     Ok(())
+}
+
+fn has_arabic(s: &str) -> bool {
+    s.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c))
+}
+
+/// Content words cut to five letters, so "tested" and "testing" meet.
+fn stems(s: &str) -> std::collections::HashSet<String> {
+    const STOP: &[&str] = &[
+        "the", "and", "for", "you", "that", "this", "with", "have", "are", "was", "but", "not",
+        "what", "can", "like", "just", "its", "they", "then", "there", "their", "from", "your",
+        "our", "will", "would", "about", "also", "into", "out", "all", "any", "how", "why",
+        "when", "who", "which", "please", "okay", "yeah",
+    ];
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3 && !STOP.contains(w))
+        .map(|w| w.chars().take(5).collect())
+        .collect()
 }
 
 /// Result of an API call: the text plus token usage for the cost meter.
@@ -454,6 +505,46 @@ pub struct ApiResult {
     pub text: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+/// Error text when the user canceled the take while the AI step was running.
+pub const CANCELED: &str = "canceled by the user";
+
+/// `cmd.output()`, but polled every 100 ms so a user cancel kills the process
+/// instead of waiting out its own timeout.
+fn output_cancellable(cmd: &mut Command, cancel: &dyn Fn() -> bool) -> Result<std::process::Output> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if cancel() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow!(CANCELED));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
 }
 
 /// Call a hosted LLM with the user's own API key (Anthropic, OpenAI, or an
@@ -466,6 +557,7 @@ pub fn run_api(
     model: &str,
     system: &str,
     user: &str,
+    cancel: &dyn Fn() -> bool,
 ) -> Result<ApiResult> {
     if api_key.trim().is_empty() {
         return Err(anyhow!("API key is not set"));
@@ -551,9 +643,8 @@ pub fn run_api(
 
     let mut curl = Command::new("curl");
     curl.arg("-K").arg(&cfg_path);
-    let out = hidden(&mut curl)
-        .output()
-        .map_err(|e| anyhow!("could not start curl: {e}"));
+    let out = output_cancellable(hidden(&mut curl), cancel)
+        .map_err(|e| anyhow!("could not run curl: {e}"));
     // Remove both temp files (key-bearing config + request body) right away.
     let _ = std::fs::remove_file(&cfg_path);
     let _ = std::fs::remove_file(&body_path);
@@ -614,20 +705,30 @@ pub fn run_api(
 
 /// Default CLI model. This is a light text transform (clean up / translate /
 /// tidy a prompt), so Haiku — fast and cheap — is the right default; the user
-/// can opt up to Sonnet/Opus in Settings when they want more polish. Aliases
-/// are passed through so a newer Haiku/Sonnet/Opus is picked up with no code
-/// change. A dated fallback covers the rare case the Haiku alias can't be served
-/// (overloaded / temporarily unavailable).
+/// can opt up to any model the CLI offers (`cli_models::list`). Aliases are
+/// passed through so a newer model is picked up with no code change. A dated
+/// fallback covers the rare case the Haiku alias can't be served (overloaded /
+/// temporarily unavailable).
 const CLI_FALLBACK_MODEL: &str = "claude-haiku-4-5-20251001";
 
-/// Normalize the user's CLI model choice to a Claude model alias. Anything we
-/// don't recognize falls back to the fast default so a bad value can't break
-/// the enhance step.
-fn cli_model_alias(model: &str) -> &'static str {
-    match model.trim() {
-        "sonnet" => "sonnet",
-        "opus" => "opus",
-        _ => "haiku",
+/// The user's CLI model choice, or the fast default when it is not a plausible
+/// model name, so a bad value can't break the enhance step or smuggle a flag.
+fn cli_model_alias(model: &str) -> &str {
+    let model = model.trim();
+    if crate::cli_models::is_model_name(model) {
+        model
+    } else {
+        "haiku"
+    }
+}
+
+/// The user's effort level; low (the default) when unset or not a level name.
+fn cli_effort(effort: &str) -> &str {
+    let effort = effort.trim();
+    if crate::cli_models::is_effort(effort) {
+        effort
+    } else {
+        "low"
     }
 }
 
@@ -637,7 +738,7 @@ fn cli_model_alias(model: &str) -> &'static str {
 /// request, which would otherwise freeze dictation.
 const CLI_TIMEOUT: Duration = Duration::from_secs(25);
 
-fn cli_exe(command: &str) -> &str {
+pub(crate) fn cli_exe(command: &str) -> &str {
     let command = command.trim();
     if command.is_empty() {
         "claude"
@@ -647,9 +748,15 @@ fn cli_exe(command: &str) -> &str {
 }
 
 /// Identity of a CLI session: a parked process is only reused for a call with
-/// the same executable, model and system prompt it was started with.
-fn session_key(command: &str, model: &str, system_prompt: &str) -> String {
-    format!("{}\n{}\n{}", cli_exe(command), cli_model_alias(model), system_prompt)
+/// the same executable, model, effort and system prompt it was started with.
+fn session_key(command: &str, model: &str, effort: &str, system_prompt: &str) -> String {
+    format!(
+        "{}\n{}\n{}\n{}",
+        cli_exe(command),
+        cli_model_alias(model),
+        cli_effort(effort),
+        system_prompt
+    )
 }
 
 /// One stream-json user message line, the only thing a session is ever sent.
@@ -696,9 +803,9 @@ pub fn parse_result_line(line: &str) -> Option<Result<String>> {
 /// latency (or worse, the user's global CLAUDE.md and hooks bleeding into the
 /// output), so the session is stripped to the bone:
 ///   --system-prompt          replace the giant default agent prompt with just ours
-///   --model <alias>          the user's pick: haiku (default) / sonnet / opus
+///   --model <alias>          the user's pick: haiku (default) or any CLI alias
 ///   --fallback-model <id>    dated Haiku if the Haiku alias is unavailable
-///   --effort low             no extended thinking before a grammar fix
+///   --effort <level>         the user's pick; low (default) also turns thinking off
 ///   --tools ""               load no tool schemas, no agentic tool-use loop
 ///   --safe-mode              disable CLAUDE.md / skills / plugins / hooks / MCP
 ///                            (keeps subscription auth + model selection working)
@@ -714,9 +821,10 @@ pub struct CliSession {
 
 /// Start the CLI and leave it waiting for the transcript. Fails only when the
 /// executable can't be launched; everything else surfaces from `run`.
-pub fn spawn_cli(command: &str, model: &str, system_prompt: &str) -> Result<CliSession> {
+pub fn spawn_cli(command: &str, model: &str, effort: &str, system_prompt: &str) -> Result<CliSession> {
     let exe = cli_exe(command).to_string();
     let model = cli_model_alias(model);
+    let effort = cli_effort(effort);
 
     let mut cmd = Command::new(&exe);
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
@@ -730,16 +838,18 @@ pub fn spawn_cli(command: &str, model: &str, system_prompt: &str) -> Result<CliS
     if model == "haiku" {
         cmd.arg("--fallback-model").arg(CLI_FALLBACK_MODEL);
     }
-    cmd.args(["--effort", "low", "--tools", "", "--safe-mode", "--no-session-persistence"])
+    cmd.args(["--effort", effort, "--tools", "", "--safe-mode", "--no-session-persistence"])
         .current_dir(std::env::temp_dir()) // neutral cwd: don't pick up a project CLAUDE.md
         // Without this every call also fires a hidden background Haiku request
         // (seen in the result's modelUsage): wasted quota and a competing call.
-        .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-        // `--effort low` still lets Haiku 4.5 think for 300-900 tokens (~4.7 s a
-        // call, measured); with thinking off it answers in ~1.1 s. A grammar fix
-        // gains nothing from thinking.
-        .env("MAX_THINKING_TOKENS", "0")
-        .stdin(Stdio::piped())
+        .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
+    // `--effort low` still lets Haiku 4.5 think for 300-900 tokens (~4.7 s a
+    // call, measured); with thinking off it answers in ~1.1 s. A grammar fix
+    // gains nothing from thinking. Any higher effort is the user asking for it.
+    if effort == "low" {
+        cmd.env("MAX_THINKING_TOKENS", "0");
+    }
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = hidden(&mut cmd)
@@ -775,7 +885,7 @@ pub fn spawn_cli(command: &str, model: &str, system_prompt: &str) -> Result<CliS
     }
 
     Ok(CliSession {
-        key: session_key(&exe, model, system_prompt),
+        key: session_key(&exe, model, effort, system_prompt),
         exe,
         child: Some(child),
         stdin,
@@ -785,8 +895,8 @@ pub fn spawn_cli(command: &str, model: &str, system_prompt: &str) -> Result<CliS
 }
 
 impl CliSession {
-    pub fn matches(&self, command: &str, model: &str, system_prompt: &str) -> bool {
-        self.key == session_key(command, model, system_prompt)
+    pub fn matches(&self, command: &str, model: &str, effort: &str, system_prompt: &str) -> bool {
+        self.key == session_key(command, model, effort, system_prompt)
     }
 
     /// False once the process has exited, e.g. it failed to start up while parked.
@@ -796,7 +906,7 @@ impl CliSession {
 
     /// Send the transcript and wait for the rewritten text. One process, one
     /// transcript: closing stdin after the message tells the CLI it is the last.
-    pub fn run(mut self, user_text: &str) -> Result<String> {
+    pub fn run(mut self, user_text: &str, cancel: &dyn Fn() -> bool) -> Result<String> {
         let exe = self.exe.clone();
         let mut stdin = self
             .stdin
@@ -808,7 +918,20 @@ impl CliSession {
             .map_err(|e| anyhow!("{exe} exited before the transcript was sent: {e}"))?;
         drop(stdin);
 
-        match self.result.recv_timeout(CLI_TIMEOUT) {
+        // Short waits so a cancel (Esc) stops the CLI at once instead of holding
+        // the next dictation until the timeout.
+        let deadline = Instant::now() + CLI_TIMEOUT;
+        let received = loop {
+            if cancel() {
+                self.kill();
+                return Err(anyhow!(CANCELED));
+            }
+            match self.result.recv_timeout(Duration::from_millis(100)) {
+                Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
+                other => break other,
+            }
+        };
+        match received {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => {
                 self.kill();
@@ -949,6 +1072,22 @@ to wish you joy again, happy birthday little one, may your days be full of sun a
             Err(Rejection::AnswerShaped),
             "Vibe engineer never grows a take"
         );
+        // Short answers keep none of what was said.
+        assert_eq!(
+            check_reply("prompt", "what's the capital of france", "Paris."),
+            Err(Rejection::AnswerShaped)
+        );
+        assert_eq!(
+            check_reply("polish", "write me a haiku about the sea at night", "Waves fold into dark, salt wind hums the moon to sleep."),
+            Err(Rejection::AnswerShaped)
+        );
+        // A real rewrite of a short take keeps its words, and a one-word take is left alone.
+        assert_eq!(
+            check_reply("prompt", "it should accept a cloud cli or cloud code lets say cloud code", "It should accept Claude Code."),
+            Ok(())
+        );
+        assert_eq!(check_reply("polish", "hmm ahmed", "Hmm, Ahmed."), Ok(()));
+        assert_eq!(check_reply("translate", "what's the capital of france", "ما هي عاصمة فرنسا؟"), Ok(()));
     }
 
     #[test]
@@ -1050,9 +1189,12 @@ to wish you joy again, happy birthday little one, may your days be full of sun a
 
     #[test]
     fn session_key_normalizes_command_and_model() {
-        assert_eq!(session_key("", "haiku", "s"), session_key(" claude ", "unknown", "s"));
-        assert_ne!(session_key("claude", "sonnet", "s"), session_key("claude", "haiku", "s"));
-        assert_ne!(session_key("claude", "sonnet", "a"), session_key("claude", "sonnet", "b"));
+        assert_eq!(session_key("", "haiku", "", "s"), session_key(" claude ", "Bad Model", "low", "s"));
+        assert_ne!(session_key("claude", "sonnet", "low", "s"), session_key("claude", "haiku", "low", "s"));
+        assert_ne!(session_key("claude", "sonnet", "low", "a"), session_key("claude", "sonnet", "low", "b"));
+        assert_ne!(session_key("claude", "fable", "low", "s"), session_key("claude", "fable", "high", "s"));
+        assert_eq!(cli_model_alias("--tools x"), "haiku");
+        assert_eq!(cli_effort("max; rm"), "low");
     }
 
     /// Live check against the real CLI, the way the app uses it: spawn, stay
@@ -1063,14 +1205,15 @@ to wish you joy again, happy birthday little one, may your days be full of sun a
     #[ignore]
     fn live_cli_session() {
         let model = std::env::var("ECHOFLOW_CLI_MODEL").unwrap_or_else(|_| "haiku".into());
-        let mut s = spawn_cli("claude", &model, &polish_system(Lock::Auto)).expect("spawn");
+        let mut s = spawn_cli("claude", &model, "low", &polish_system(Lock::Auto)).expect("spawn");
         std::thread::sleep(Duration::from_secs(5));
         assert!(s.is_alive(), "CLI exited while parked");
         let t = Instant::now();
         let out = s
-            .run(&wrap_transcript(
-                "please can you send me the file what we talk about it in the morning",
-            ))
+            .run(
+                &wrap_transcript("please can you send me the file what we talk about it in the morning"),
+                &|| false,
+            )
             .expect("run");
         eprintln!("[{model}] warm run {} ms -> {out}", t.elapsed().as_millis());
         assert!(!out.is_empty());
@@ -1081,7 +1224,7 @@ to wish you joy again, happy birthday little one, may your days be full of sun a
     #[test]
     #[ignore]
     fn live_unused_session_is_stopped_on_drop() {
-        let mut s = spawn_cli("claude", "haiku", &polish_system(Lock::Auto)).expect("spawn");
+        let mut s = spawn_cli("claude", "haiku", "low", &polish_system(Lock::Auto)).expect("spawn");
         std::thread::sleep(Duration::from_secs(2));
         assert!(s.is_alive());
         let mut child_id = None;

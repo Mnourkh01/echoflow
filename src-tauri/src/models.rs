@@ -31,6 +31,9 @@ pub struct RecordingResult {
     /// left on the clipboard instead, and the UI tells the user to paste (or to
     /// restart as administrator). Always false for stored rows.
     pub paste_blocked: bool,
+    /// True when the take was delivered but could not be saved to history
+    /// (disk full, locked DB). `id` is then -1. Always false for stored rows.
+    pub save_failed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,7 +78,8 @@ pub struct Settings {
     pub mix_arabic: bool,      // English lock + AI step: mixed-script Whisper prompt so spoken Arabic reaches the AI
     pub ai_engine: String,    // "cli" (default) | "api"
     pub cli_command: String,  // CLI used when ai_engine == "cli" (e.g. "claude")
-    pub cli_model: String,    // model for the CLI path: "haiku" (default) | "sonnet" | "opus"
+    pub cli_model: String,    // model for the CLI path: "haiku" (default) or any alias the CLI offers
+    pub cli_effort: String,   // CLI --effort level: "low" (default, thinking off) .. "max"
     pub api_provider: String, // "anthropic" | "openai" | "custom"
     pub api_key: String,      // user's own key (stored locally only)
     pub api_model: String,    // model id for the chosen provider
@@ -121,6 +125,7 @@ impl Default for Settings {
             ai_engine: "cli".to_string(),
             cli_command: "claude".to_string(),
             cli_model: "haiku".to_string(),
+            cli_effort: "low".to_string(),
             api_provider: "anthropic".to_string(),
             api_key: String::new(),
             api_model: String::new(),

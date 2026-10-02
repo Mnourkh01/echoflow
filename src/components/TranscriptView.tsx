@@ -15,6 +15,8 @@ interface Props {
 }
 
 export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props) {
+  // A take that could not be saved (id -1) has no history row to pin or export.
+  const saved = !!rec && rec.id >= 0;
   const { t } = useT();
   const [copied, setCopied] = useState(false);
   const [showSegments, setShowSegments] = useState(false);
@@ -72,7 +74,7 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
         </span>
 
         <div className="ms-auto flex items-center gap-1.5">
-          {onTogglePin && (
+          {onTogglePin && saved && (
             <button
               onClick={() => onTogglePin(rec.id, !rec.pinned)}
               className={`tool-btn ${rec.pinned ? "text-accent" : ""}`}
@@ -93,15 +95,19 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
               <BookmarkPlus className="h-4 w-4" />
             </button>
           )}
-          <button onClick={() => exportAs("txt")} className="tool-btn" title={t("export_txt")}>
-            <FileText className="h-4 w-4" />
-          </button>
-          <button onClick={() => exportAs("srt")} className="tool-btn" title={t("export_srt")}>
-            <Captions className="h-4 w-4" />
-          </button>
-          <button onClick={() => exportAs("docx")} className="tool-btn" title={t("export_docx")}>
-            <FileType className="h-4 w-4" />
-          </button>
+          {saved && (
+            <>
+              <button onClick={() => exportAs("txt")} className="tool-btn" title={t("export_txt")}>
+                <FileText className="h-4 w-4" />
+              </button>
+              <button onClick={() => exportAs("srt")} className="tool-btn" title={t("export_srt")}>
+                <Captions className="h-4 w-4" />
+              </button>
+              <button onClick={() => exportAs("docx")} className="tool-btn" title={t("export_docx")}>
+                <FileType className="h-4 w-4" />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -128,11 +134,11 @@ export default function TranscriptView({ rec, onTogglePin, onSavePrompt }: Props
       </div>
 
       <div className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3">
-        <audio
-          controls
-          src={convertFileSrc(rec.audio_path)}
-          className="h-9 flex-1"
-        />
+        {rec.audio_path ? (
+          <audio controls src={convertFileSrc(rec.audio_path)} className="h-9 flex-1" />
+        ) : (
+          <div className="flex-1" />
+        )}
         <button
           onClick={() => setShowSegments((v) => !v)}
           className="rounded-lg px-3 py-1.5 text-xs text-ink-400 hover:bg-white/[0.06] hover:text-white"

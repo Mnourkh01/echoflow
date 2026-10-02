@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { X, Trash2, AlertTriangle, RefreshCw, Volume2, ShieldCheck } from "lucide-react";
-import type { ApiUsage, DownloadEnd, DownloadProgress, ModelInfo, OutputMode, Settings } from "../lib/api";
+import type { ApiUsage, CliModel, CliModels, DownloadEnd, DownloadProgress, ModelInfo, OutputMode, Settings } from "../lib/api";
 import { api } from "../lib/api";
 import { MODEL_CATALOG, RECOMMENDED_MODEL, fmtSize } from "../lib/models";
 import { checkForUpdate, installUpdate } from "../lib/updater";
@@ -80,14 +80,30 @@ const DEFAULT_API_MODEL: Record<string, string> = {
   custom: "",
 };
 
-// CLI (subscription) model choices for the enhance step. Haiku is the default —
-// fast and free on the user's plan, and right for light text cleanup. Sonnet 5
-// and Opus trade speed for polish. Values are Claude CLI aliases.
-const CLI_MODELS: { value: string; key: StringKey }[] = [
-  { value: "haiku", key: "cli_model_haiku" },
-  { value: "sonnet", key: "cli_model_sonnet" },
-  { value: "opus", key: "cli_model_opus" },
-];
+// CLI (subscription) model choices come from the installed CLI (`api.cliModels`).
+// Until it answers, or when it can't, these aliases still work: the CLI maps
+// each to its newest model. Haiku is the default, right for light cleanup.
+const CLI_FALLBACK: CliModel[] = ["haiku", "sonnet", "opus", "fable"].map((alias) => ({ alias, id: null }));
+const CLI_EFFORTS_FALLBACK = ["low", "medium", "high", "xhigh", "max"];
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// "claude-sonnet-5-5" -> "Sonnet 5.5", "claude-haiku-4-5-20251001" -> "Haiku 4.5".
+// Unresolved alias -> "Sonnet".
+function cliModelName(m: CliModel): string {
+  if (!m.id) return capital(m.alias);
+  const parts = m.id.replace(/^claude-/, "").split("-");
+  const family = parts.find((p) => !/^\d+$/.test(p)) ?? m.alias;
+  const version = parts.filter((p) => /^\d{1,2}$/.test(p)).join(".");
+  return version ? `${capital(family)} ${version}` : capital(family);
+}
+
+const CLI_TAGS: Record<string, StringKey> = {
+  haiku: "cli_tag_haiku",
+  sonnet: "cli_tag_sonnet",
+  opus: "cli_tag_big",
+  fable: "cli_tag_big",
+};
 
 // Recognition languages (what Whisper transcribes). "auto" is added in the UI.
 // Value is the Whisper code; label is the native name. European entries carry
@@ -159,6 +175,32 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
   testingRef.current = testing;
 
   const refreshModels = () => api.listModels().then(setModels).catch(() => {});
+
+  // CLI models and effort levels, read from the installed CLI (cached a day on
+  // the Rust side). `cliReq` drops a slow answer that a newer request replaced.
+  const [cliList, setCliList] = useState<CliModels | null>(null);
+  const [cliLoading, setCliLoading] = useState(false);
+  const [cliFailed, setCliFailed] = useState(false);
+  const cliReq = useRef(0);
+  const loadCliModels = (command: string, refresh: boolean) => {
+    const req = ++cliReq.current;
+    setCliLoading(true);
+    setCliFailed(false);
+    api
+      .cliModels(command, refresh)
+      .then((list) => {
+        if (req !== cliReq.current) return;
+        setCliList(list);
+        setCliFailed(list.models.every((m) => !m.id));
+      })
+      .catch(() => req === cliReq.current && setCliFailed(true))
+      .finally(() => req === cliReq.current && setCliLoading(false));
+  };
+  const cliEngine = open && settings?.ai_engine === "cli";
+  useEffect(() => {
+    if (cliEngine && settings) loadCliModels(settings.cli_command, false);
+    // Only on open / engine switch; the command field refreshes via the button.
+  }, [cliEngine]);
 
   useEffect(() => {
     if (!open) return;
@@ -362,12 +404,21 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
       toSave = { ...toSave, api_model: DEFAULT_API_MODEL[toSave.api_provider] };
       setSettings(toSave);
     }
-    const ok = await api.updateSettings(toSave);
+    setWarn(null);
+    let ok: boolean;
+    try {
+      ok = await api.updateSettings(toSave);
+    } catch (e) {
+      setWarn(String(e));
+      return;
+    }
+    // Saved either way; false only means the hotkey could not be registered,
+    // so the panel stays open with the warning and the next Save retries it.
+    onSaved(toSave);
     if (!ok) {
       setWarn(t("hotkey_warn"));
       return;
     }
-    onSaved(toSave);
     onClose();
   }
 
@@ -509,22 +560,73 @@ export default function SettingsPanel({ open, onClose, onSaved, onDataCleared }:
                     dir="ltr"
                     className="field"
                   />
-                  <label className="block">
-                    <span className="mb-1 block text-xs text-ink-500">{t("cli_model")}</span>
-                    <select
-                      value={settings.cli_model || "haiku"}
-                      onChange={(e) => patch({ cli_model: e.target.value })}
-                      className="field"
-                      dir="ltr"
-                    >
-                      {CLI_MODELS.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {t(m.key)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="text-xs text-ink-500">{t("cli_model_hint")}</p>
+                  {(() => {
+                    const current = settings.cli_model || "haiku";
+                    const listed = cliList?.models.length ? cliList.models : CLI_FALLBACK;
+                    // A saved alias the CLI no longer names stays selectable.
+                    const models = listed.some((m) => m.alias === current)
+                      ? listed
+                      : [...listed, { alias: current, id: null }];
+                    const effort = settings.cli_effort || "low";
+                    const listedEfforts = cliList?.efforts.length ? cliList.efforts : CLI_EFFORTS_FALLBACK;
+                    const efforts = listedEfforts.includes(effort) ? listedEfforts : [...listedEfforts, effort];
+                    const effortKey = (e: string) => `cli_effort_${e}` as StringKey;
+                    return (
+                      <>
+                        <div className="flex items-end gap-2">
+                          <label className="block min-w-0 flex-1">
+                            <span className="mb-1 block text-xs text-ink-500">{t("cli_model")}</span>
+                            <select
+                              value={current}
+                              onChange={(e) => patch({ cli_model: e.target.value })}
+                              className="field"
+                              dir="ltr"
+                            >
+                              {models.map((m) => {
+                                const tag = CLI_TAGS[m.alias];
+                                return (
+                                  <option key={m.alias} value={m.alias}>
+                                    {cliModelName(m)}
+                                    {tag ? ` · ${t(tag)}` : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => loadCliModels(settings.cli_command, true)}
+                            disabled={cliLoading}
+                            title={t("cli_models_refresh")}
+                            aria-label={t("cli_models_refresh")}
+                            className="mb-px rounded-lg bg-white/[0.05] p-2.5 text-ink-400 transition hover:text-white disabled:opacity-50"
+                          >
+                            <RefreshCw size={14} className={cliLoading ? "animate-spin" : ""} />
+                          </button>
+                        </div>
+                        <label className="block">
+                          <span className="mb-1 block text-xs text-ink-500">{t("cli_effort")}</span>
+                          <select
+                            value={effort}
+                            onChange={(e) => patch({ cli_effort: e.target.value })}
+                            className="field"
+                          >
+                            {efforts.map((e) => (
+                              <option key={e} value={e}>
+                                {CLI_EFFORTS_FALLBACK.includes(e) ? t(effortKey(e)) : capital(e)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {cliLoading && <p className="text-xs text-ink-500">{t("cli_models_checking")}</p>}
+                        {!cliLoading && cliFailed && (
+                          <p className="text-xs text-amber-300/80">{t("cli_models_failed")}</p>
+                        )}
+                        <p className="text-xs text-ink-500">{t("cli_model_hint")}</p>
+                        <p className="text-xs text-ink-500">{t("cli_effort_hint")}</p>
+                      </>
+                    );
+                  })()}
                 </div>
               ) : (
                 <div className="mt-2 space-y-2">

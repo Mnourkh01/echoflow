@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct AppPaths {
-    /// Base app-data directory; kept for diagnostics and future use.
-    #[allow(dead_code)]
+    /// Base app-data directory (holds the CLI model cache).
     pub data_dir: PathBuf,
     pub audio_dir: PathBuf,
     pub db_path: PathBuf,

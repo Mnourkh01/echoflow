@@ -163,10 +163,15 @@ impl AppState {
     /// Mark transcription as started. The returned guard clears the flag on drop
     /// (panic-safe), so `is_busy` can never get permanently stuck. Also clears
     /// any stale cancel request from a previous clip.
-    pub fn begin_transcribing(&self) -> TranscribeGuard<'_> {
+    /// None while another take is already transcribing: a duplicate stop (Esc or
+    /// the silence guard racing the hotkey) must not reset that take's cancel
+    /// flag or clear its busy flag when it bails out.
+    pub fn begin_transcribing(&self) -> Option<TranscribeGuard<'_>> {
+        self.transcribing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()?;
         self.cancel_transcribe.store(false, Ordering::SeqCst);
-        self.transcribing.store(true, Ordering::SeqCst);
-        TranscribeGuard(&self.transcribing)
+        Some(TranscribeGuard(&self.transcribing))
     }
 
     /// Request that the in-flight transcription abort (the cancel button).

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Cpu, AlertTriangle, Minimize2 } from "lucide-react";
+import { Settings as SettingsIcon, Cpu, AlertTriangle, Minimize2, X } from "lucide-react";
 import RecordControl, { type RecState } from "./components/RecordControl";
 import TranscriptView from "./components/TranscriptView";
 import HistorySidebar, { type SidebarTab } from "./components/HistorySidebar";
@@ -14,7 +14,7 @@ import FirstRunModel from "./components/FirstRunModel";
 import Onboarding from "./components/Onboarding";
 import { api, type AppStatus, type OutputMode, type Prompt, type RecordingResult, type RecordingSummary, type Settings } from "./lib/api";
 import { checkForUpdate, notifyUpdateOnce, type Update } from "./lib/updater";
-import { I18nProvider, translate } from "./lib/i18n";
+import { I18nProvider, translate, type StringKey } from "./lib/i18n";
 import { playStart, playStop, configureSound } from "./lib/sound";
 import { applyAccent } from "./lib/theme";
 
@@ -54,6 +54,10 @@ export default function App() {
   // Refs so global/keyboard event handlers always see the latest state.
   const recStateRef = useRef(recState);
   recStateRef.current = recState;
+  // Settings, first-run picker or onboarding on screen: keys belong to them.
+  const modalOpenRef = useRef(false);
+  modalOpenRef.current =
+    settingsOpen || (!!status && !status.model_present) || (!!status?.model_present && !!settings && !settings.onboarded);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   // Declared here (above start/stop) so both closures share it without TDZ risk.
@@ -138,7 +142,9 @@ export default function App() {
         setActiveId(res.id);
         await refreshHistory();
         flashMic("happy");
-        if (res.enhance_rejected) {
+        if (res.save_failed) {
+          flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "save_failed_notice"));
+        } else if (res.enhance_rejected) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
         } else if (res.enhance_failed) {
           flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_offline_notice"));
@@ -157,6 +163,8 @@ export default function App() {
       // A Translate take in a language it is not set to hear: refused, not broken.
       if (String(e) === "wrong-language") {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "wrong_language_notice"));
+      } else if (String(e) === "not recording") {
+        // The take was already ended elsewhere (mic lost); its result arrives as an event.
       } else {
         setError(String(e));
       }
@@ -210,32 +218,56 @@ export default function App() {
     return () => clearInterval(id);
   }, [recState]);
 
-  // In-app push to talk: hold Space (ignore when typing in a field).
+  // In-app push to talk: hold Space. Space keeps its normal job on any control
+  // that uses it (buttons, toggles, menus, fields) and while a modal is open;
+  // the record button itself is the exception.
   useEffect(() => {
-    const isTyping = () => {
+    const spaceIsOurs = () => {
+      if (modalOpenRef.current) return false;
       const el = document.activeElement;
-      return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      if (!el || el === document.body) return true;
+      if (el.closest("[data-record-control]")) return true;
+      // Fields always keep Space (typing, opening a menu).
+      if (el.closest("input, textarea, select, [contenteditable=true]")) return false;
+      // A button keeps Space only when reached by keyboard: a mouse click also
+      // focuses it, and Space must not press it again instead of recording.
+      // (Not :focus-visible: Chromium turns that on as soon as any key is pressed.)
+      const control = el.closest(
+        "button, a[href], [role=button], [role=switch], [role=checkbox], [role=tab], [role=option]"
+      );
+      return !control || focusByPointer;
+    };
+    let spaceStarted = false;
+    // Focus came from a click (true) or the keyboard (false); see spaceIsOurs.
+    let focusByPointer = false;
+    const pointer = () => {
+      focusByPointer = true;
     };
     const down = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !e.repeat && !isTyping()) {
+      if (e.key === "Tab" || e.key.startsWith("Arrow")) focusByPointer = false;
+      if (e.code === "Space" && !e.repeat && spaceIsOurs()) {
         e.preventDefault();
+        spaceStarted = true;
         start();
       }
       // Esc = discard, whether still recording or already transcribing.
-      if (e.code === "Escape" && !e.repeat && recStateRef.current !== "idle") {
+      if (e.code === "Escape" && !e.repeat && recStateRef.current !== "idle" && !modalOpenRef.current) {
         e.preventDefault();
         cancel();
       }
     };
     const up = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !isTyping()) {
+      if (e.code === "Space" && spaceStarted) {
+        spaceStarted = false;
         e.preventDefault();
         stop();
       }
     };
+    window.addEventListener("pointerdown", pointer, true);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     return () => {
+      window.removeEventListener("pointerdown", pointer, true);
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
@@ -247,6 +279,7 @@ export default function App() {
     const sound = () => settingsRef.current?.sound ?? true;
     const offStarted = listen("rec-started", () => {
       if (sound()) playStart();
+      setError(null);
       setElapsed(0);
       setRecState("recording");
     });
@@ -255,13 +288,16 @@ export default function App() {
       setRecState("transcribing");
     });
     const offResult = listen<RecordingResult>("dictation-result", (e) => {
+      setError(null);
       setCurrent(e.payload);
       setActiveId(e.payload.id);
       refreshHistory();
       setRecState("idle");
       setLevel(0);
       flashMic("happy");
-      if (e.payload.paste_blocked) {
+      if (e.payload.save_failed) {
+        flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "save_failed_notice"));
+      } else if (e.payload.paste_blocked) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "paste_blocked_notice"));
       } else if (e.payload.enhance_rejected) {
         flashNotice(translate(settingsRef.current?.ui_lang ?? "en", "enhance_rejected_notice"));
@@ -275,6 +311,11 @@ export default function App() {
       setLevel(0);
       flashMic("sad");
     });
+    // Something the user should know that did not stop the take (mic lost).
+    // The payload is an i18n key.
+    const offNotice = listen<StringKey>("rec-notice", (e) =>
+      flashNotice(translate(settingsRef.current?.ui_lang ?? "en", e.payload))
+    );
     const offCanceled = listen<string>("rec-canceled", (e) => {
       const wasActive = recStateRef.current !== "idle";
       setRecState("idle");
@@ -310,6 +351,7 @@ export default function App() {
       offStopped.then((f) => f());
       offResult.then((f) => f());
       offError.then((f) => f());
+      offNotice.then((f) => f());
       offCanceled.then((f) => f());
       offCancelRequested.then((f) => f());
       offSettings.then((f) => f());
@@ -488,11 +530,18 @@ export default function App() {
         {error && (
           <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-5 py-2 text-sm text-amber-300">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span className="selectable">{error}</span>
+            <span className="selectable min-w-0 flex-1">{error}</span>
+            <button
+              onClick={() => setError(null)}
+              aria-label={translate(settings?.ui_lang ?? "en", "dismiss")}
+              className="shrink-0 rounded p-1 text-amber-300/70 transition hover:text-amber-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
 
-        {notice && !error && (
+        {notice && (
           <div className="border-b border-accent/20 bg-accent/10 px-5 py-2 text-sm text-accent-soft">
             {notice}
           </div>

@@ -49,15 +49,18 @@ export default function RecordControl({ state, level, elapsedMs, onToggle, onCan
   return (
     <div className="flex flex-col items-center gap-5 py-7">
       {robot ? (
-        <RobotMascot
-          state={state}
-          level={level}
-          onToggle={onToggle}
-          flash={flash}
-          label={recording ? t("stop_recording") : t("start_recording")}
-        />
+        <div data-record-control className="contents">
+          <RobotMascot
+            state={state}
+            level={level}
+            onToggle={onToggle}
+            flash={flash}
+            label={recording ? t("stop_recording") : t("start_recording")}
+          />
+        </div>
       ) : (
       <div
+        data-record-control
         className={`relative grid h-28 w-28 place-items-center ${orbSad ? "rb-shake" : ""}`}
         style={{
           transform: `scale(${orbPop ? 1.08 : 1})`,

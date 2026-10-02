@@ -24,10 +24,17 @@ pub struct CapturedAudio {
 
 pub struct RecordingHandle {
     stop_flag: Arc<AtomicBool>,
+    /// Set by the stream's error callback, e.g. the mic was unplugged mid-take.
+    failed: Arc<AtomicBool>,
     join: JoinHandle<Result<CapturedAudio>>,
 }
 
 impl RecordingHandle {
+    /// The device reported an error since capture started (unplugged, lost).
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::SeqCst)
+    }
+
     /// Stop capture and return everything recorded so far.
     pub fn stop(self) -> Result<CapturedAudio> {
         self.stop_flag.store(true, Ordering::SeqCst);
@@ -56,20 +63,33 @@ fn peak_level(level: &AtomicU32, data: &[f32]) {
     level.store(peak.to_bits(), Ordering::Relaxed);
 }
 
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Start capturing from the named device (or system default). Blocks only long
 /// enough to confirm the stream opened, then records on a background thread.
 pub fn start(device_name: Option<String>, level: Arc<AtomicU32>) -> Result<RecordingHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_thread = stop_flag.clone();
+    let failed = Arc::new(AtomicBool::new(false));
+    let failed_thread = failed.clone();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
     let join = std::thread::spawn(move || -> Result<CapturedAudio> {
         let host = cpal::default_host();
         let device = match &device_name {
-            Some(name) => host
+            // A re-plugged USB mic can come back under a new Windows name; the
+            // default mic beats refusing to record at all.
+            Some(name) => match host
                 .input_devices()?
                 .find(|d| d.name().map(|n| &n == name).unwrap_or(false))
-                .ok_or_else(|| anyhow!("input device '{name}' not found"))?,
+            {
+                Some(d) => d,
+                None => {
+                    log::warn!("input device '{name}' not found, using the default microphone");
+                    host.default_input_device()
+                        .ok_or_else(|| anyhow!("input device '{name}' not found and no default microphone"))?
+                }
+            },
             None => host
                 .default_input_device()
                 .ok_or_else(|| anyhow!("no default microphone found"))?,
@@ -79,7 +99,10 @@ pub fn start(device_name: Option<String>, level: Arc<AtomicU32>) -> Result<Recor
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
         let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-        let err_fn = |e| log::error!("audio stream error: {e}");
+        let err_fn = move |e| {
+            log::error!("audio stream error: {e}");
+            failed_thread.store(true, Ordering::SeqCst);
+        };
 
         let stream = {
             let buf = buffer.clone();
@@ -135,11 +158,21 @@ pub fn start(device_name: Option<String>, level: Arc<AtomicU32>) -> Result<Recor
         })
     });
 
-    // Surface open/permission errors synchronously to the caller.
-    match ready_rx.recv() {
-        Ok(Ok(())) => Ok(RecordingHandle { stop_flag, join }),
+    // Surface open/permission errors synchronously to the caller. Bounded: the
+    // caller holds the recording slot (and may be on the main thread), and a
+    // Bluetooth profile switch can stall the open for a long time.
+    match ready_rx.recv_timeout(OPEN_TIMEOUT) {
+        Ok(Ok(())) => Ok(RecordingHandle { stop_flag, failed, join }),
         Ok(Err(e)) => Err(e),
-        Err(_) => {
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // The thread notices the flag once the stream finally opens.
+            stop_flag.store(true, Ordering::SeqCst);
+            Err(anyhow!(
+                "the microphone did not respond within {} s",
+                OPEN_TIMEOUT.as_secs()
+            ))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
             // Thread returned before signalling ready: join to get the real error.
             match join.join() {
                 Ok(Err(e)) => Err(e),

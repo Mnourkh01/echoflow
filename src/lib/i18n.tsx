@@ -224,12 +224,28 @@ const STRINGS = {
     ar: "الـCLI المحلي المستخدم للترجمة وتحسين الصياغة ووضع Vibe engineer. الافتراضي: claude (اشتراكك الحالي، بدون مفتاح API).",
   },
   cli_model: { en: "Model", ar: "النموذج" },
-  cli_model_haiku: { en: "Haiku · fast", ar: "Haiku · سريع" },
-  cli_model_sonnet: { en: "Sonnet 5 · balanced", ar: "Sonnet 5 · متوازن" },
-  cli_model_opus: { en: "Opus · best", ar: "Opus · الأفضل" },
+  cli_tag_haiku: { en: "fast", ar: "سريع" },
+  cli_tag_sonnet: { en: "balanced", ar: "متوازن" },
+  cli_tag_big: { en: "strongest, slower", ar: "الاقوى، ابطا" },
   cli_model_hint: {
-    en: "Haiku is fast and free on your subscription, ideal for quick cleanups. Step up to Sonnet 5 or Opus for tougher text.",
-    ar: "Haiku سريع ومجاني مع اشتراكك، مثالي للتحسينات السريعة. ارتقِ إلى Sonnet 5 أو Opus للنصوص الأصعب.",
+    en: "Haiku is fast and ideal for quick cleanups. Step up to a bigger model for tougher text. The list comes from your installed CLI, so new models show up on their own.",
+    ar: "Haiku سريع ومناسب للتحسينات السريعة. اختر نموذج اكبر للنصوص الاصعب. القائمة تاتي من الـCLI المثبت عندك، فالنماذج الجديدة تظهر لوحدها.",
+  },
+  cli_effort: { en: "Effort", ar: "مستوى الجهد" },
+  cli_effort_low: { en: "Low · fastest, no thinking", ar: "منخفض · الاسرع، بدون تفكير" },
+  cli_effort_medium: { en: "Medium", ar: "متوسط" },
+  cli_effort_high: { en: "High", ar: "عالي" },
+  cli_effort_xhigh: { en: "Extra high", ar: "عالي جدا" },
+  cli_effort_max: { en: "Max · slowest", ar: "الاقصى · الابطا" },
+  cli_effort_hint: {
+    en: "Low answers in about a second. Higher effort lets the model think first: better on hard text, but each dictation waits longer.",
+    ar: "المنخفض يرد في حوالي ثانية. الجهد الاعلى يخلي النموذج يفكر اولا: افضل للنص الصعب، لكن كل املاء ينتظر اكثر.",
+  },
+  cli_models_refresh: { en: "Refresh list", ar: "تحديث القائمة" },
+  cli_models_checking: { en: "Checking the CLI…", ar: "جاري فحص الـCLI…" },
+  cli_models_failed: {
+    en: "Could not read models from the CLI. Showing the basic list.",
+    ar: "تعذر قراءة النماذج من الـCLI. نعرض القائمة الاساسية.",
   },
   ai_engine: { en: "AI engine", ar: "محرك الذكاء الاصطناعي" },
   engine_cli: { en: "Local CLI", ar: "CLI محلي" },
@@ -295,6 +311,14 @@ const STRINGS = {
   always_admin_desc: {
     en: "Relaunch elevated on every start so dictation reaches admin windows. Windows shows a UAC prompt at each launch.",
     ar: "إعادة التشغيل بصلاحيات مرتفعة عند كل بدء ليصل الإملاء إلى نوافذ المسؤول. يعرض ويندوز نافذة UAC عند كل تشغيل.",
+  },
+  save_failed_notice: {
+    en: "Your text was delivered, but it could not be saved to history (disk full?).",
+    ar: "وصل نصك، لكن ما قدرنا نحفظه في السجل (القرص ممتلئ؟).",
+  },
+  mic_lost_notice: {
+    en: "The microphone stopped responding (unplugged?). What was recorded so far was transcribed.",
+    ar: "المايك توقف عن الاستجابة (انفصل؟). تم تحويل اللي تسجل لحد الان الى نص.",
   },
   paste_blocked_notice: {
     en: "Couldn't type where you started. Your text is on the clipboard, paste with Ctrl+V. (Admin windows need Restart as administrator.)",
@@ -460,6 +484,7 @@ const STRINGS = {
   },
 
   cancel: { en: "Cancel", ar: "إلغاء" },
+  dismiss: { en: "Dismiss", ar: "اغلاق" },
   save: { en: "Save", ar: "حفظ" },
   hotkey_warn: {
     en: "That shortcut could not be registered (another app may already use it). Pick a different one.",
